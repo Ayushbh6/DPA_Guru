@@ -1,0 +1,5 @@
+.env
+venv/
+*.md
+!README.md
+test_docs/

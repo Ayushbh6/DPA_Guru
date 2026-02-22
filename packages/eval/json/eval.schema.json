@@ -1,0 +1,86 @@
+{
+  "$defs": {
+    "EvalRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset_id": {
+          "minLength": 1,
+          "title": "Dataset Id",
+          "type": "string"
+        },
+        "run_id": {
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "metric_name": {
+          "minLength": 1,
+          "title": "Metric Name",
+          "type": "string"
+        },
+        "metric_value": {
+          "title": "Metric Value",
+          "type": "number"
+        },
+        "threshold": {
+          "title": "Threshold",
+          "type": "number"
+        },
+        "pass_fail": {
+          "title": "Pass Fail",
+          "type": "boolean"
+        },
+        "evaluated_at": {
+          "format": "date-time",
+          "title": "Evaluated At",
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        }
+      },
+      "required": [
+        "dataset_id",
+        "run_id",
+        "metric_name",
+        "metric_value",
+        "threshold",
+        "pass_fail",
+        "evaluated_at"
+      ],
+      "title": "EvalRecord",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    },
+    "records": {
+      "items": {
+        "$ref": "#/$defs/EvalRecord"
+      },
+      "minItems": 1,
+      "title": "Records",
+      "type": "array"
+    }
+  },
+  "required": [
+    "version",
+    "records"
+  ],
+  "title": "EvalBatch",
+  "type": "object"
+}

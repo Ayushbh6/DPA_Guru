@@ -1,0 +1,37 @@
+Curated Registry Pipeline Runbook (On-Demand)
+============================================
+
+Prerequisites
+-------------
+1. DATABASE_URL is set to the Postgres database.
+2. For cloud storage:
+   - SUPABASE_URL
+   - SUPABASE_SERVICE_ROLE_KEY
+3. For draft generation:
+   - OPENROUTER_API_KEY
+   - Optional: OPENROUTER_MODEL
+
+Bootstrap
+---------
+1. make db-upgrade
+2. make registry-seed
+
+Pipeline (manual)
+-----------------
+1. make registry-fetch
+2. make registry-diff
+3. POLICY_VERSION=policy-YYYY-MM-DD make registry-draft
+4. Review checklist version:
+   python -m dpa_registry.cli review --version-id <VERSION_ID> --decision REVIEWED --comment "Reviewed"
+5. Approve and auto-promote:
+   python -m dpa_registry.cli approve --version-id <VERSION_ID> --notes "Approved for activation"
+
+Status
+------
+1. make registry-status
+
+Rollback (promote prior archived version)
+-----------------------------------------
+1. Review archived version if needed.
+2. Approve archived version again:
+   python -m dpa_registry.cli approve --version-id <ARCHIVED_VERSION_ID> --notes "Rollback promote"

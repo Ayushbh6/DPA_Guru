@@ -1,0 +1,11 @@
+alembic
+beautifulsoup4
+docker
+pgvector
+psycopg[binary]
+pydantic
+pytest
+python-dotenv
+requests
+SQLAlchemy
+testcontainers

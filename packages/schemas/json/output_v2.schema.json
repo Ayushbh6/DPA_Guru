@@ -1,0 +1,272 @@
+{
+  "$defs": {
+    "CheckResult": {
+      "additionalProperties": false,
+      "properties": {
+        "check_id": {
+          "minLength": 1,
+          "title": "Check Id",
+          "type": "string"
+        },
+        "category": {
+          "minLength": 1,
+          "title": "Category",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/FindingStatus"
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "abstained": {
+          "default": false,
+          "title": "Abstained",
+          "type": "boolean"
+        },
+        "abstain_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Abstain Reason"
+        },
+        "review_required": {
+          "default": false,
+          "title": "Review Required",
+          "type": "boolean"
+        },
+        "review_state": {
+          "$ref": "#/$defs/ReviewState",
+          "default": "PENDING"
+        },
+        "citation_pages": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Citation Pages",
+          "type": "array"
+        },
+        "evidence_span_offsets": {
+          "items": {
+            "$ref": "#/$defs/EvidenceSpan"
+          },
+          "title": "Evidence Span Offsets",
+          "type": "array"
+        },
+        "risk_rationale": {
+          "minLength": 1,
+          "title": "Risk Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "check_id",
+        "category",
+        "status",
+        "risk",
+        "confidence",
+        "risk_rationale"
+      ],
+      "title": "CheckResult",
+      "type": "object"
+    },
+    "EvidenceSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "minimum": 1,
+          "title": "Page",
+          "type": "integer"
+        },
+        "start_offset": {
+          "minimum": 0,
+          "title": "Start Offset",
+          "type": "integer"
+        },
+        "end_offset": {
+          "minimum": 0,
+          "title": "End Offset",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "page",
+        "start_offset",
+        "end_offset"
+      ],
+      "title": "EvidenceSpan",
+      "type": "object"
+    },
+    "FindingStatus": {
+      "enum": [
+        "COMPLIANT",
+        "NON_COMPLIANT",
+        "PARTIAL",
+        "UNKNOWN"
+      ],
+      "title": "FindingStatus",
+      "type": "string"
+    },
+    "OverallSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "score": {
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "title": "Score",
+          "type": "number"
+        },
+        "risk_level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "score",
+        "risk_level",
+        "summary"
+      ],
+      "title": "OverallSummary",
+      "type": "object"
+    },
+    "ReviewState": {
+      "enum": [
+        "PENDING",
+        "APPROVED",
+        "REJECTED"
+      ],
+      "title": "ReviewState",
+      "type": "string"
+    },
+    "RiskLevel": {
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "model_version": {
+      "minLength": 1,
+      "title": "Model Version",
+      "type": "string"
+    },
+    "policy_version": {
+      "minLength": 1,
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "overall": {
+      "$ref": "#/$defs/OverallSummary"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/CheckResult"
+      },
+      "minItems": 1,
+      "title": "Checks",
+      "type": "array"
+    },
+    "highlights": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Highlights",
+      "type": "array"
+    },
+    "next_actions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Next Actions",
+      "type": "array"
+    },
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "abstained": {
+      "default": false,
+      "title": "Abstained",
+      "type": "boolean"
+    },
+    "abstain_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Abstain Reason"
+    },
+    "review_required": {
+      "default": false,
+      "title": "Review Required",
+      "type": "boolean"
+    },
+    "review_state": {
+      "$ref": "#/$defs/ReviewState",
+      "default": "PENDING"
+    },
+    "citation_pages": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Citation Pages",
+      "type": "array"
+    },
+    "evidence_span_offsets": {
+      "items": {
+        "$ref": "#/$defs/EvidenceSpan"
+      },
+      "title": "Evidence Span Offsets",
+      "type": "array"
+    },
+    "risk_rationale": {
+      "minLength": 1,
+      "title": "Risk Rationale",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "model_version",
+    "policy_version",
+    "overall",
+    "checks",
+    "confidence",
+    "risk_rationale"
+  ],
+  "title": "OutputV2Report",
+  "type": "object"
+}

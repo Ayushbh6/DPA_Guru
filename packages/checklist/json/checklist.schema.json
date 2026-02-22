@@ -1,0 +1,249 @@
+{
+  "$defs": {
+    "ApprovalStatus": {
+      "enum": [
+        "DRAFT",
+        "REVIEWED",
+        "APPROVED"
+      ],
+      "title": "ApprovalStatus",
+      "type": "string"
+    },
+    "ChecklistGovernance": {
+      "additionalProperties": false,
+      "properties": {
+        "owner": {
+          "minLength": 1,
+          "title": "Owner",
+          "type": "string"
+        },
+        "approval_status": {
+          "$ref": "#/$defs/ApprovalStatus"
+        },
+        "approved_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approved By"
+        },
+        "approved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approved At"
+        },
+        "policy_version": {
+          "minLength": 1,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "change_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Note"
+        }
+      },
+      "required": [
+        "owner",
+        "approval_status",
+        "policy_version"
+      ],
+      "title": "ChecklistGovernance",
+      "type": "object"
+    },
+    "ChecklistItem": {
+      "additionalProperties": false,
+      "properties": {
+        "check_id": {
+          "pattern": "^[A-Z0-9_.-]+$",
+          "title": "Check Id",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "category": {
+          "minLength": 1,
+          "title": "Category",
+          "type": "string"
+        },
+        "legal_basis": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Legal Basis",
+          "type": "array"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "severity": {
+          "$ref": "#/$defs/ChecklistSeverity"
+        },
+        "evidence_hint": {
+          "minLength": 1,
+          "title": "Evidence Hint",
+          "type": "string"
+        },
+        "pass_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Pass Criteria",
+          "type": "array"
+        },
+        "fail_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Fail Criteria",
+          "type": "array"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/ChecklistSource"
+          },
+          "minItems": 1,
+          "title": "Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "check_id",
+        "title",
+        "category",
+        "legal_basis",
+        "required",
+        "severity",
+        "evidence_hint",
+        "pass_criteria",
+        "fail_criteria",
+        "sources"
+      ],
+      "title": "ChecklistItem",
+      "type": "object"
+    },
+    "ChecklistSeverity": {
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "MANDATORY"
+      ],
+      "title": "ChecklistSeverity",
+      "type": "string"
+    },
+    "ChecklistSource": {
+      "additionalProperties": false,
+      "properties": {
+        "source_type": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "authority": {
+          "minLength": 1,
+          "title": "Authority",
+          "type": "string"
+        },
+        "source_ref": {
+          "minLength": 1,
+          "title": "Source Ref",
+          "type": "string"
+        },
+        "source_url": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Source Url",
+          "type": "string"
+        },
+        "source_excerpt": {
+          "minLength": 1,
+          "title": "Source Excerpt",
+          "type": "string"
+        },
+        "interpretation_notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interpretation Notes"
+        }
+      },
+      "required": [
+        "source_type",
+        "authority",
+        "source_ref",
+        "source_url",
+        "source_excerpt"
+      ],
+      "title": "ChecklistSource",
+      "type": "object"
+    },
+    "SourceType": {
+      "enum": [
+        "LAW",
+        "GUIDELINE",
+        "INTERNAL_POLICY"
+      ],
+      "title": "SourceType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    },
+    "governance": {
+      "$ref": "#/$defs/ChecklistGovernance"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/ChecklistItem"
+      },
+      "minItems": 1,
+      "title": "Checks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "version",
+    "governance",
+    "checks"
+  ],
+  "title": "ChecklistDocument",
+  "type": "object"
+}

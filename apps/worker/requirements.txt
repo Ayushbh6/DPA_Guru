@@ -2,3 +2,6 @@ pydantic
 python-dotenv
 psycopg[binary]
 SQLAlchemy
+beautifulsoup4
+pypdf
+tiktoken

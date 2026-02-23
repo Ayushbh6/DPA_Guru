@@ -3,6 +3,9 @@ venv/
 *.md
 !README.md
 test_docs/
+.registry_storage/
+kb/
+.future_work/
 
 # Node.js
 node_modules/

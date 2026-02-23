@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PROJECT_PYTHONPATH="apps/api/src:apps/worker/src:packages/schemas/python:packages/checklist/python:packages/eval/python"
+
+if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
+  PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+else
+  PYTHON_BIN="python"
+fi
+
+if [ -n "${PYTHONPATH:-}" ]; then
+  export PYTHONPATH="$PROJECT_PYTHONPATH:$PYTHONPATH"
+else
+  export PYTHONPATH="$PROJECT_PYTHONPATH"
+fi
+
+cd "$ROOT_DIR"
+exec "$PYTHON_BIN" "$@"

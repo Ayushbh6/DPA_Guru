@@ -29,6 +29,12 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
             database_url = _to_psycopg_url(postgres.get_connection_url())
             alembic_cfg = _alembic_config(database_url)
 
+            # Local/test Postgres containers don't include Supabase-style roles by default.
+            bootstrap_engine = sa.create_engine(database_url, future=True)
+            with bootstrap_engine.begin() as bootstrap_conn:
+                bootstrap_conn.execute(sa.text("DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;"))
+            bootstrap_engine.dispose()
+
             command.upgrade(alembic_cfg, "head")
 
             engine = sa.create_engine(database_url, future=True)
@@ -44,15 +50,10 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                     "review_actions",
                     "billing_events",
                     "audit_events",
-                    "registry_sources",
-                    "registry_snapshots",
-                    "registry_diffs",
-                    "checklist_versions",
-                    "checklist_items",
-                    "checklist_item_sources",
-                    "checklist_reviews",
-                    "checklist_approvals",
-                    "registry_audit_events",
+                    "kb_sources",
+                    "kb_ingest_runs",
+                    "kb_ingest_tasks",
+                    "kb_chunks",
                 }
                 table_names = set(
                     conn.execute(
@@ -75,11 +76,9 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 assert "audit_events_trace_idx" in idx_names
                 assert "document_chunks_document_provenance_uidx" in idx_names
                 assert "findings_run_check_uidx" in idx_names
-                assert "registry_snapshots_source_lang_fetched_idx" in idx_names
-                assert "registry_diffs_source_lang_created_idx" in idx_names
-                assert "checklist_items_version_check_idx" in idx_names
-                assert "checklist_versions_single_active_idx" in idx_names
-                assert "registry_audit_events_trace_idx" in idx_names
+                assert "kb_ingest_runs_status_created_idx" in idx_names
+                assert "kb_ingest_tasks_run_final_idx" in idx_names
+                assert "kb_chunks_source_idx" in idx_names
 
                 rls_rows = conn.execute(
                     sa.text(
@@ -109,6 +108,19 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                     )
                 ).scalar_one()
                 assert embedding_type == "vector(1536)"
+                kb_embedding_type = conn.execute(
+                    sa.text(
+                        """
+                        SELECT format_type(a.atttypid, a.atttypmod)
+                        FROM pg_attribute a
+                        JOIN pg_class c ON a.attrelid = c.oid
+                        WHERE c.relname = 'kb_chunks'
+                          AND a.attname = 'embedding'
+                          AND a.attnum > 0
+                        """
+                    )
+                ).scalar_one()
+                assert kb_embedding_type == "vector(1536)"
 
                 tenant_id = conn.execute(
                     sa.text(
@@ -222,248 +234,142 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 )
                 assert "analysis_runs_tenant_status_started_idx" in explain_plan
 
-                registry_source_id = conn.execute(
+                kb_source_id = conn.execute(
                     sa.text(
                         """
-                        INSERT INTO registry_sources (
-                          source_id, authority, celex_or_doc_id, source_type,
-                          languages, status_rule, fetch_url_map, enabled
+                        INSERT INTO kb_sources (
+                          source_id, title, authority, source_kind, source_url, local_txt_path, local_md_path,
+                          content_sha256, char_count, token_count, active
                         )
                         VALUES (
-                          :source_id, :authority, :celex_or_doc_id, :source_type,
-                          :languages, :status_rule, :fetch_url_map::jsonb, :enabled
+                          :source_id, :title, :authority, :source_kind, :source_url, :local_txt_path, :local_md_path,
+                          :content_sha256, :char_count, :token_count, :active
                         )
                         RETURNING id
                         """
                     ),
                     {
                         "source_id": "gdpr_regulation_2016_679",
+                        "title": "GDPR",
                         "authority": "EUR-Lex",
-                        "celex_or_doc_id": "32016R0679",
-                        "source_type": "LAW",
-                        "languages": ["EN", "FR", "DE"],
-                        "status_rule": "IN_FORCE_FINAL_ONLY",
-                        "fetch_url_map": '{"EN":"https://example.com/en","FR":"https://example.com/fr","DE":"https://example.com/de"}',
-                        "enabled": True,
+                        "source_kind": "HTML",
+                        "source_url": "https://example.com/gdpr",
+                        "local_txt_path": "kb/gdpr/content.txt",
+                        "local_md_path": "kb/gdpr/content.md",
+                        "content_sha256": "c" * 64,
+                        "char_count": 1234,
+                        "token_count": 456,
+                        "active": True,
                     },
                 ).scalar_one()
+                assert kb_source_id is not None
 
-                snapshot_id_1 = conn.execute(
+                kb_run_id = conn.execute(
                     sa.text(
                         """
-                        INSERT INTO registry_snapshots (
-                          registry_source_id, source_id, language, sha256,
-                          raw_storage_path, parsed_storage_path, parse_status,
-                          normalized_text, tracked_sections, metadata
+                        INSERT INTO kb_ingest_runs (
+                          id, status, kb_manifest_sha256, chunk_size, chunk_overlap, full_doc_threshold,
+                          llm_model, embedding_model, llm_concurrency, embed_concurrency, upsert_concurrency,
+                          request_retries, total_chunks
                         )
                         VALUES (
-                          :registry_source_id, :source_id, :language, :sha256,
-                          :raw_storage_path, :parsed_storage_path, :parse_status,
-                          :normalized_text, :tracked_sections::jsonb, :metadata::jsonb
+                          gen_random_uuid(), :status, :kb_manifest_sha256, :chunk_size, :chunk_overlap, :full_doc_threshold,
+                          :llm_model, :embedding_model, :llm_concurrency, :embed_concurrency, :upsert_concurrency,
+                          :request_retries, :total_chunks
                         )
                         RETURNING id
                         """
                     ),
                     {
-                        "registry_source_id": registry_source_id,
+                        "status": "RUNNING",
+                        "kb_manifest_sha256": "d" * 64,
+                        "chunk_size": 800,
+                        "chunk_overlap": 300,
+                        "full_doc_threshold": 50000,
+                        "llm_model": "test-llm",
+                        "embedding_model": "test-embed",
+                        "llm_concurrency": 2,
+                        "embed_concurrency": 2,
+                        "upsert_concurrency": 2,
+                        "request_retries": 1,
+                        "total_chunks": 1,
+                    },
+                ).scalar_one()
+
+                kb_task_id = conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO kb_ingest_tasks (
+                          id, run_id, source_id, chunk_index, chunk_count, raw_text, raw_text_sha256,
+                          chunk_token_count, doc_token_count, context_mode, context_window_start, context_window_end,
+                          context_text, llm_status, embed_status, upsert_status, final_status,
+                          structured_json, structured_text, embedding_dim, embedding
+                        )
+                        VALUES (
+                          gen_random_uuid(), :run_id, :source_id, :chunk_index, :chunk_count, :raw_text, :raw_text_sha256,
+                          :chunk_token_count, :doc_token_count, :context_mode, :context_window_start, :context_window_end,
+                          :context_text, 'SUCCEEDED', 'SUCCEEDED', 'PENDING', 'PENDING',
+                          CAST(:structured_json AS jsonb), :structured_text, 1536, CAST(:embedding AS vector)
+                        )
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "run_id": kb_run_id,
                         "source_id": "gdpr_regulation_2016_679",
-                        "language": "EN",
-                        "sha256": "a" * 64,
-                        "raw_storage_path": "supabase://legal-source-raw/gdpr/one.raw",
-                        "parsed_storage_path": "supabase://legal-source-parsed/gdpr/one.txt",
-                        "parse_status": "PARSED",
-                        "normalized_text": "Article 28 old text",
-                        "tracked_sections": '["Article 28 old text"]',
-                        "metadata": '{"source_url":"https://example.com/en"}',
+                        "chunk_index": 0,
+                        "chunk_count": 1,
+                        "raw_text": "Article 28 processor obligations",
+                        "raw_text_sha256": "e" * 64,
+                        "chunk_token_count": 10,
+                        "doc_token_count": 100,
+                        "context_mode": "FULL_DOC",
+                        "context_window_start": 0,
+                        "context_window_end": 0,
+                        "context_text": "Article 28 processor obligations",
+                        "structured_json": '{"source_title":"GDPR","source_url":"https://example.com/gdpr","article_no":"Article 28","short_description":"Processor clauses","consequences":null,"possible_reasons":["Missing instruction clause"],"citation_quote":"processor obligations","citation_section":"Article 28"}',
+                        "structured_text": '{"article_no":"Article 28"}',
+                        "embedding": "[" + ",".join(["0.0"] * 1536) + "]",
                     },
                 ).scalar_one()
 
-                snapshot_id_2 = conn.execute(
+                conn.execute(
                     sa.text(
                         """
-                        INSERT INTO registry_snapshots (
-                          registry_source_id, source_id, language, sha256,
-                          raw_storage_path, parsed_storage_path, parse_status,
-                          normalized_text, tracked_sections, metadata
+                        INSERT INTO kb_chunks (
+                          source_id, source_title, source_url, chunk_index, chunk_count, chunk_token_count, doc_token_count,
+                          context_mode, context_window_start, context_window_end, raw_text, structured_json, structured_text,
+                          combined_text, raw_text_sha256, llm_model, embedding_model, embedding
                         )
                         VALUES (
-                          :registry_source_id, :source_id, :language, :sha256,
-                          :raw_storage_path, :parsed_storage_path, :parse_status,
-                          :normalized_text, :tracked_sections::jsonb, :metadata::jsonb
+                          :source_id, :source_title, :source_url, :chunk_index, :chunk_count, :chunk_token_count, :doc_token_count,
+                          :context_mode, :context_window_start, :context_window_end, :raw_text, CAST(:structured_json AS jsonb), :structured_text,
+                          :combined_text, :raw_text_sha256, :llm_model, :embedding_model, CAST(:embedding AS vector)
                         )
-                        RETURNING id
                         """
                     ),
                     {
-                        "registry_source_id": registry_source_id,
                         "source_id": "gdpr_regulation_2016_679",
-                        "language": "EN",
-                        "sha256": "b" * 64,
-                        "raw_storage_path": "supabase://legal-source-raw/gdpr/two.raw",
-                        "parsed_storage_path": "supabase://legal-source-parsed/gdpr/two.txt",
-                        "parse_status": "PARSED",
-                        "normalized_text": "Article 28 changed text",
-                        "tracked_sections": '["Article 28 changed text"]',
-                        "metadata": '{"source_url":"https://example.com/en"}',
-                    },
-                ).scalar_one()
-
-                conn.execute(
-                    sa.text(
-                        """
-                        INSERT INTO registry_diffs (
-                          registry_source_id, source_id, language, from_snapshot_id,
-                          to_snapshot_id, change_class, summary, changed_sections, token_change_ratio
-                        )
-                        VALUES (
-                          :registry_source_id, :source_id, :language, :from_snapshot_id,
-                          :to_snapshot_id, :change_class, :summary, :changed_sections::jsonb, :token_change_ratio
-                        )
-                        """
-                    ),
-                    {
-                        "registry_source_id": registry_source_id,
-                        "source_id": "gdpr_regulation_2016_679",
-                        "language": "EN",
-                        "from_snapshot_id": snapshot_id_1,
-                        "to_snapshot_id": snapshot_id_2,
-                        "change_class": "MATERIAL_CHANGE",
-                        "summary": "Material legal change.",
-                        "changed_sections": '["Article 28 changed text"]',
-                        "token_change_ratio": 0.45,
+                        "source_title": "GDPR",
+                        "source_url": "https://example.com/gdpr",
+                        "chunk_index": 0,
+                        "chunk_count": 1,
+                        "chunk_token_count": 10,
+                        "doc_token_count": 100,
+                        "context_mode": "FULL_DOC",
+                        "context_window_start": 0,
+                        "context_window_end": 0,
+                        "raw_text": "Article 28 processor obligations",
+                        "structured_json": '{"source_title":"GDPR","source_url":"https://example.com/gdpr","article_no":"Article 28","short_description":"Processor clauses","consequences":null,"possible_reasons":["Missing instruction clause"],"citation_quote":"processor obligations","citation_section":"Article 28"}',
+                        "structured_text": '{"article_no":"Article 28"}',
+                        "combined_text": "## RAW_TEXT_CHUNK\\nArticle 28 processor obligations",
+                        "raw_text_sha256": "e" * 64,
+                        "llm_model": "test-llm",
+                        "embedding_model": "test-embed",
+                        "embedding": "[" + ",".join(["0.0"] * 1536) + "]",
                     },
                 )
-
-                checklist_version_id = conn.execute(
-                    sa.text(
-                        """
-                        INSERT INTO checklist_versions (
-                          version_id, status, is_active, policy_version, generated_from_snapshot_set,
-                          governance, checklist_json, created_by
-                        )
-                        VALUES (
-                          :version_id, :status, :is_active, :policy_version, :generated_from_snapshot_set::jsonb,
-                          :governance::jsonb, :checklist_json::jsonb, :created_by
-                        )
-                        RETURNING id
-                        """
-                    ),
-                    {
-                        "version_id": "checklist_20260217_190000",
-                        "status": "ACTIVE",
-                        "is_active": True,
-                        "policy_version": "policy-2026-02-17",
-                        "generated_from_snapshot_set": f'["{snapshot_id_2}"]',
-                        "governance": '{"owner":"Policy Team","approval_status":"REVIEWED","policy_version":"policy-2026-02-17"}',
-                        "checklist_json": '{"version":"official_v1","governance":{"owner":"Policy Team","approval_status":"REVIEWED","policy_version":"policy-2026-02-17"},"checks":[]}',
-                        "created_by": "registry-operator",
-                    },
-                ).scalar_one()
-
-                checklist_item_id = conn.execute(
-                    sa.text(
-                        """
-                        INSERT INTO checklist_items (
-                          checklist_version_id, check_id, title, category, legal_basis, required,
-                          severity, evidence_hint, pass_criteria, fail_criteria, sort_order
-                        )
-                        VALUES (
-                          :checklist_version_id, :check_id, :title, :category, :legal_basis::jsonb, :required,
-                          :severity, :evidence_hint, :pass_criteria::jsonb, :fail_criteria::jsonb, :sort_order
-                        )
-                        RETURNING id
-                        """
-                    ),
-                    {
-                        "checklist_version_id": checklist_version_id,
-                        "check_id": "CHECK_001",
-                        "title": "Instruction limitation",
-                        "category": "Instructions",
-                        "legal_basis": '["Policy Section 1"]',
-                        "required": True,
-                        "severity": "MANDATORY",
-                        "evidence_hint": "Find instruction clause",
-                        "pass_criteria": '["clause exists"]',
-                        "fail_criteria": '["clause missing"]',
-                        "sort_order": 0,
-                    },
-                ).scalar_one()
-
-                conn.execute(
-                    sa.text(
-                        """
-                        INSERT INTO checklist_item_sources (
-                          checklist_item_id, source_type, authority, source_ref,
-                          source_url, source_excerpt, interpretation_notes
-                        )
-                        VALUES (
-                          :checklist_item_id, :source_type, :authority, :source_ref,
-                          :source_url, :source_excerpt, :interpretation_notes
-                        )
-                        """
-                    ),
-                    {
-                        "checklist_item_id": checklist_item_id,
-                        "source_type": "LAW",
-                        "authority": "EUR-Lex",
-                        "source_ref": "Article 28",
-                        "source_url": "https://example.com/legal",
-                        "source_excerpt": "Processor shall process only on instructions.",
-                        "interpretation_notes": "baseline mapping",
-                    },
-                )
-
-                conn.execute(
-                    sa.text(
-                        """
-                        INSERT INTO checklist_reviews (checklist_version_id, reviewer_id, decision, comment)
-                        VALUES (:checklist_version_id, :reviewer_id, :decision, :comment)
-                        """
-                    ),
-                    {
-                        "checklist_version_id": checklist_version_id,
-                        "reviewer_id": "reviewer-1",
-                        "decision": "REVIEWED",
-                        "comment": "Looks good",
-                    },
-                )
-
-                conn.execute(
-                    sa.text(
-                        """
-                        INSERT INTO checklist_approvals (checklist_version_id, approver_id, action, notes)
-                        VALUES (:checklist_version_id, :approver_id, :action, :notes)
-                        """
-                    ),
-                    {
-                        "checklist_version_id": checklist_version_id,
-                        "approver_id": "owner-1",
-                        "action": "APPROVED_AND_PROMOTED",
-                        "notes": "approved",
-                    },
-                )
-
-                conn.execute(
-                    sa.text(
-                        """
-                        INSERT INTO registry_audit_events (
-                          actor_type, actor_id, event_name, resource_type, resource_id, trace_id, details
-                        )
-                        VALUES (
-                          :actor_type, :actor_id, :event_name, :resource_type, :resource_id, :trace_id, :details::jsonb
-                        )
-                        """
-                    ),
-                    {
-                        "actor_type": "user",
-                        "actor_id": "owner-1",
-                        "event_name": "registry.approve",
-                        "resource_type": "checklist_versions",
-                        "resource_id": "checklist_20260217_190000",
-                        "trace_id": "trace-123",
-                        "details": '{"status":"ACTIVE"}',
-                    },
-                )
+                assert kb_task_id is not None
 
             command.downgrade(alembic_cfg, "base")
 

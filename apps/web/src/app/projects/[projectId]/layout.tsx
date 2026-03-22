@@ -49,6 +49,20 @@ function ThemeToggle() {
 import { createProject, deleteProject, renameProject, type ProjectSummary } from "@/lib/uploadApi";
 import { ProjectProvider, useProject } from "./ProjectProvider";
 
+function projectStatusStyle(status: string): React.CSSProperties {
+  if (status === 'REVIEW_COMPLETE') return { color: 'var(--status-compliant)', background: 'var(--status-compliant-bg)', borderColor: 'var(--status-compliant)' };
+  if (status === 'CHECKLIST_APPROVED') return { color: 'var(--status-partial)', background: 'var(--status-partial-bg)', borderColor: 'var(--status-partial)' };
+  if (status.includes('FAIL')) return { color: 'var(--status-noncompliant)', background: 'var(--status-noncompliant-bg)', borderColor: 'var(--status-noncompliant)' };
+  return { color: 'var(--text-2)', background: 'var(--bg-2)', borderColor: 'var(--line)' };
+}
+
+function statusDotColor(status: string): string {
+  if (status === 'REVIEW_COMPLETE') return 'var(--status-compliant)';
+  if (status === 'CHECKLIST_APPROVED') return 'var(--status-partial)';
+  if (status.includes('FAIL')) return 'var(--status-noncompliant)';
+  return 'var(--text-3)';
+}
+
 function formatStatus(status: string) {
   return status.replaceAll("_", " ");
 }
@@ -111,7 +125,10 @@ function SidebarProjectItem({
               {project.name.charAt(0).toUpperCase()}
             </div>
           ) : (
-            <div className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{project.name}</div>
+            <>
+              <span className="inline-block h-2 w-2 shrink-0" style={{ background: statusDotColor(project.status), borderRadius: '50%' }} />
+              <div className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{project.name}</div>
+            </>
           )}
         </div>
         {!collapsed && (
@@ -192,6 +209,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
   const { projectId, loading, projects, detail, workspaceError, setWorkspaceError, refreshSidebar, setDetail } = useProject();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mobileOverlay, setMobileOverlay] = useState(false);
   const [renameMode, setRenameMode] = useState(false);
   const [renameValue, setRenameValue] = useState(detail?.project?.name || "");
   const [renaming, setRenaming] = useState(false);
@@ -206,6 +224,29 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
       setRenameValue(currentProject.name);
     }
   }, [currentProject?.name, renameMode]);
+
+  // Auto-collapse sidebar on mobile
+  useEffect(() => {
+    function handleResize() {
+      if (window.innerWidth < 768) {
+        setSidebarOpen(false);
+        setMobileOverlay(false);
+      } else {
+        setMobileOverlay(false);
+      }
+    }
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  function toggleSidebar() {
+    const nextOpen = !sidebarOpen;
+    setSidebarOpen(nextOpen);
+    if (window.innerWidth < 768) {
+      setMobileOverlay(nextOpen);
+    }
+  }
 
   async function handleNewProject() {
     const name = prompt("Enter a name for the new analysis:", "Untitled analysis");
@@ -279,10 +320,19 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
 
   return (
     <main className="flex h-screen overflow-hidden" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
+      {/* Mobile overlay backdrop */}
+      {mobileOverlay && (
+        <div
+          className="fixed inset-0 z-30 md:hidden"
+          style={{ background: 'rgba(0,0,0,0.5)' }}
+          onClick={() => { setSidebarOpen(false); setMobileOverlay(false); }}
+        />
+      )}
+
       {/* Sidebar */}
       <aside
-        className={`relative z-20 flex shrink-0 flex-col transition-all duration-300 ${
-          sidebarOpen ? "w-[300px]" : "w-[72px]"
+        className={`fixed md:relative z-40 flex shrink-0 flex-col transition-all duration-300 h-full ${
+          sidebarOpen ? "w-[300px] translate-x-0" : "w-[72px] max-md:-translate-x-full max-md:w-0 md:translate-x-0"
         }`}
         style={{ background: 'var(--bg-1)', borderRight: '1px solid var(--line)' }}
       >
@@ -306,7 +356,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
             {sidebarOpen && <ThemeToggle />}
             <button
               type="button"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={toggleSidebar}
               className="flex h-8 w-8 shrink-0 items-center justify-center transition-colors"
               style={{ color: 'var(--text-3)' }}
               onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
@@ -396,7 +446,17 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
 
       {/* Main Content Area */}
       <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="mx-auto flex h-full w-full max-w-7xl flex-1 flex-col overflow-hidden px-5 py-6 md:px-8 md:py-8">
+        {/* Mobile sidebar toggle button */}
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className="fixed left-3 top-3 z-20 flex h-10 w-10 items-center justify-center md:hidden"
+          style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', color: 'var(--text-2)' }}
+        >
+          <PanelLeftOpen className="h-4 w-4" />
+        </button>
+
+        <div className="mx-auto flex h-full w-full max-w-7xl flex-1 flex-col overflow-hidden px-4 py-4 md:px-8 md:py-8">
           <div className="mb-5 shrink-0">
             <Link
               href="/"
@@ -482,11 +542,15 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="px-4 py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Project Status</div>
-                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{formatStatus(currentProject?.status || "EMPTY")}</div>
+                  <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Project Status</div>
+                  <div className="mt-2">
+                    <span className="inline-flex items-center border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]" style={projectStatusStyle(currentProject?.status || 'EMPTY')}>
+                      {formatStatus(currentProject?.status || "EMPTY")}
+                    </span>
+                  </div>
                 </div>
                 <div className="px-4 py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Last Activity</div>
+                  <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Last Activity</div>
                   <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>
                     {currentProject?.last_activity_at ? formatRelativeDate(currentProject.last_activity_at) : "Just now"}
                   </div>
@@ -496,13 +560,13 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
 
             {/* Tabs */}
             <div className="mt-6 -mx-5 -mb-5 flex overflow-x-auto px-5 md:-mx-6 md:px-6" style={{ borderTop: '1px solid var(--line)' }}>
-              {tabs.map((tab) => {
+              {tabs.map((tab, tabIdx) => {
                 const isActive = pathname.startsWith(tab.href);
                 return (
                   <Link
                     key={tab.name}
                     href={tab.href}
-                    className="whitespace-nowrap border-b-2 px-4 py-4 text-sm font-medium transition-colors"
+                    className="flex items-center gap-2 whitespace-nowrap border-b-[3px] px-4 py-4 text-sm font-medium transition-colors"
                     style={{
                       borderBottomColor: isActive ? 'var(--accent)' : 'transparent',
                       color: isActive ? 'var(--text)' : 'var(--text-3)',
@@ -510,6 +574,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                     onMouseEnter={e => { if (!isActive) { e.currentTarget.style.color = 'var(--text-2)'; e.currentTarget.style.borderBottomColor = 'var(--line-2)'; } }}
                     onMouseLeave={e => { if (!isActive) { e.currentTarget.style.color = 'var(--text-3)'; e.currentTarget.style.borderBottomColor = 'transparent'; } }}
                   >
+                    <span className="inline-flex h-5 w-5 items-center justify-center text-[10px] font-bold" style={{ background: isActive ? 'var(--accent)' : 'var(--bg-2)', color: isActive ? 'var(--invert-fg)' : 'var(--text-3)' }}>{tabIdx + 1}</span>
                     {tab.name}
                   </Link>
                 );

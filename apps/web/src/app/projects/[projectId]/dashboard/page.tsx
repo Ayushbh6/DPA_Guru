@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Upload, X, LoaderCircle, ChevronDown } from "lucide-react";
+import { Upload, X, LoaderCircle, ChevronDown, FileText, Hash, BookOpen, Type } from "lucide-react";
 import { motion } from "framer-motion";
 import { createUpload, getDocumentParsedText } from "@/lib/uploadApi";
 import { useProject } from "../ProjectProvider";
@@ -22,6 +22,12 @@ const PARSE_STAGE_LABELS: Record<string, string> = {
 function formatParseStage(stage: string | undefined) {
   if (!stage) return "Processing";
   return PARSE_STAGE_LABELS[stage] || stage.replaceAll("_", " ");
+}
+
+function parseStatusStyle(status: string): React.CSSProperties {
+  if (status === 'COMPLETED') return { color: 'var(--status-compliant)', background: 'var(--status-compliant-bg)' };
+  if (status === 'FAILED') return { color: 'var(--status-noncompliant)', background: 'var(--status-noncompliant-bg)' };
+  return { color: 'var(--status-partial)', background: 'var(--status-partial-bg)' };
 }
 
 function formatStatus(status: string) {
@@ -222,20 +228,36 @@ export default function DashboardPage() {
 
               <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Parse Status</div>
-                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{formatStatus(document.parse_status || "UNKNOWN")}</div>
+                  <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>
+                    <FileText className="h-3.5 w-3.5" />
+                    Parse Status
+                  </div>
+                  <div className="mt-2">
+                    <span className="inline-flex items-center border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]" style={parseStatusStyle(document.parse_status || 'UNKNOWN')}>
+                      {formatStatus(document.parse_status || "UNKNOWN")}
+                    </span>
+                  </div>
                 </div>
                 <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Pages</div>
-                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{formatNumber(document.page_count)}</div>
+                  <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>
+                    <BookOpen className="h-3.5 w-3.5" />
+                    Pages
+                  </div>
+                  <div className="mt-2 text-lg font-semibold" style={{ color: 'var(--text)' }}>{formatNumber(document.page_count)}</div>
                 </div>
                 <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Token Estimate</div>
-                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{formatNumber(document.token_count_estimate)}</div>
+                  <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>
+                    <Hash className="h-3.5 w-3.5" />
+                    Token Estimate
+                  </div>
+                  <div className="mt-2 text-lg font-semibold" style={{ color: 'var(--text)' }}>{formatNumber(document.token_count_estimate)}</div>
                 </div>
                 <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Approx. Characters</div>
-                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>
+                  <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>
+                    <Type className="h-3.5 w-3.5" />
+                    Approx. Characters
+                  </div>
+                  <div className="mt-2 text-lg font-semibold" style={{ color: 'var(--text)' }}>
                     {loadingParsedText ? "Loading..." : formatNumber(approximateCharacters)}
                   </div>
                 </div>
@@ -250,7 +272,7 @@ export default function DashboardPage() {
                   style={{ color: 'var(--text)', background: 'var(--bg)' }}
                 >
                   <div>
-                    <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Parse Structure</div>
+                    <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Parse Structure</div>
                     <div className="mt-1 text-sm" style={{ color: 'var(--text-2)' }}>
                       Expand to inspect the parsed markdown text used for downstream analysis.
                     </div>

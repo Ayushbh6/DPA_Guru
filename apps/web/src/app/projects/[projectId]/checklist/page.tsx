@@ -171,9 +171,9 @@ export default function SetupChecklistPage() {
                     >
                       {checked && <Check className="w-3.5 h-3.5" style={{ color: 'var(--text)' }} />}
                     </div>
-                    <span className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>{src.authority}</span>
+                    <span className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>{src.authority}</span>
                   </div>
-                  <span className="text-[10px] uppercase tracking-[0.16em] border px-2 py-1" style={{ borderColor: 'var(--line)', color: 'var(--text-3)' }}>
+                  <span className="text-[11px] font-medium uppercase tracking-[0.16em] border px-2 py-1" style={{ borderColor: 'var(--line)', color: 'var(--text-3)' }}>
                     {src.kind}
                   </span>
                 </div>
@@ -231,7 +231,7 @@ export default function SetupChecklistPage() {
               <p className="mt-3 max-w-3xl text-sm" style={{ color: 'var(--text-3)' }}>{checklistDraft.message || "Preparing your checklist."}</p>
             </div>
             <div className="border px-4 py-3 text-sm min-w-[220px]" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-              <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Draft Job</div>
+              <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Draft Job</div>
               <div className="mt-1 break-all" style={{ color: 'var(--text-2)' }}>{checklistDraft.checklist_draft_id}</div>
             </div>
           </div>

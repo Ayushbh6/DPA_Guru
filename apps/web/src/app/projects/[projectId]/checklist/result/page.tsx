@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, CheckCircle2, Download, ExternalLink, LoaderCircle, Plus, Trash2, X } from "lucide-react";
+import { Check, CheckCircle2, Download, ExternalLink, LoaderCircle, Plus, ShieldAlert, Trash2, X } from "lucide-react";
 import {
   approveChecklist,
   getApprovedChecklist,
@@ -138,6 +138,28 @@ function buildApprovalChecks(checks: EditableChecklistRow[]): ChecklistItem[] {
       sources: check.sources.length ? check.sources.map((source) => ({ ...source })) : [manualPlaceholderSource()],
     };
   });
+}
+
+function severityStyle(severity: string): React.CSSProperties {
+  const map: Record<string, { color: string; bg: string }> = {
+    MANDATORY: { color: 'var(--sev-mandatory)', bg: 'var(--sev-mandatory-bg)' },
+    HIGH:      { color: 'var(--sev-high)',      bg: 'var(--sev-high-bg)' },
+    MEDIUM:    { color: 'var(--sev-medium)',    bg: 'var(--sev-medium-bg)' },
+    LOW:       { color: 'var(--sev-low)',       bg: 'var(--sev-low-bg)' },
+  };
+  const t = map[severity] ?? map.MEDIUM;
+  return { color: t.color, background: t.bg, borderColor: t.color };
+}
+
+function cardLeftColor(check: EditableChecklistRow): string {
+  if (check._decision === 'rejected') return 'var(--status-noncompliant)';
+  const map: Record<string, string> = {
+    MANDATORY: 'var(--sev-mandatory)',
+    HIGH: 'var(--sev-high)',
+    MEDIUM: 'var(--sev-medium)',
+    LOW: 'var(--sev-low)',
+  };
+  return map[check.severity] ?? 'var(--line-2)';
 }
 
 function checklistCardTone(check: EditableChecklistRow): React.CSSProperties {
@@ -292,19 +314,19 @@ export default function ChecklistResultPage() {
               </p>
             </div>
             {approvedSummary && (
-              <div className="border border-emerald-300/20 bg-emerald-300/5 px-4 py-3 text-sm text-emerald-50/85">
+              <div className="border px-4 py-3 text-sm" style={{ borderColor: 'var(--success)', background: 'var(--success-bg)', color: 'var(--success)' }}>
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4" />
                   Approved by {approvedSummary.approved_by || "local-dev"}
                 </div>
-                {approvedSummary.approved_at && <div className="mt-2 text-xs text-emerald-100/60">{new Date(approvedSummary.approved_at).toLocaleString()}</div>}
+                {approvedSummary.approved_at && <div className="mt-2 text-xs" style={{ opacity: 0.7 }}>{new Date(approvedSummary.approved_at).toLocaleString()}</div>}
               </div>
             )}
           </div>
 
           <div className="mt-6 grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]">
             <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-              <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Version</div>
+              <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Version</div>
               <input
                 value={version}
                 onChange={(event) => setVersion(event.target.value)}
@@ -313,7 +335,7 @@ export default function ChecklistResultPage() {
               />
             </div>
             <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-              <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Change Note</div>
+              <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Change Note</div>
               <input
                 value={changeNote}
                 onChange={(event) => setChangeNote(event.target.value)}
@@ -343,16 +365,45 @@ export default function ChecklistResultPage() {
             </button>
           </div>
 
-          <div className="mt-4 flex items-center gap-3 text-sm" style={{ color: 'var(--text-3)' }}>
-            <span>{acceptedCount} accepted</span>
-            <span style={{ opacity: 0.4 }}>/</span>
-            <span>{checks.length - acceptedCount} rejected</span>
+          {/* KPI summary bar */}
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="flex items-center gap-3 border px-4 py-3" style={{ borderColor: 'var(--line)', background: 'var(--bg)' }}>
+              <div className="h-8 w-1" style={{ background: 'var(--success)' }} />
+              <div>
+                <div className="text-lg font-semibold" style={{ color: 'var(--success)' }}>{acceptedCount}</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Accepted</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 border px-4 py-3" style={{ borderColor: 'var(--line)', background: 'var(--bg)' }}>
+              <div className="h-8 w-1" style={{ background: 'var(--danger)' }} />
+              <div>
+                <div className="text-lg font-semibold" style={{ color: 'var(--danger)' }}>{checks.length - acceptedCount}</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Rejected</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 border px-4 py-3" style={{ borderColor: 'var(--line)', background: 'var(--bg)' }}>
+              <div className="h-8 w-1" style={{ background: 'var(--accent)' }} />
+              <div>
+                <div className="text-lg font-semibold" style={{ color: 'var(--text)' }}>{checks.length}</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Total</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 border px-4 py-3" style={{ borderColor: 'var(--line)', background: 'var(--bg)' }}>
+              <div className="h-8 w-1" style={{ background: 'var(--warning)' }} />
+              <div>
+                <div className="text-lg font-semibold" style={{ color: 'var(--text)' }}>{groupedChecks.length}</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Categories</div>
+              </div>
+            </div>
           </div>
 
           <div className="mt-8 grid gap-8">
             {groupedChecks.map(([category, grouped]) => (
               <div key={category}>
+                <div className="flex items-center gap-3">
                 <div className="text-xs uppercase tracking-[0.2em]" style={{ color: 'var(--text-3)' }}>{category}</div>
+                <span className="inline-flex items-center border px-2 py-0.5 text-[10px] font-medium" style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text-2)' }}>{grouped.length}</span>
+              </div>
                 <div className="mt-4 grid gap-4">
                   {grouped.map((check) => {
                     const index = checks.findIndex((item) => item.check_id === check.check_id);
@@ -361,12 +412,16 @@ export default function ChecklistResultPage() {
                     const isRejected = current?._decision === "rejected";
 
                     return (
-                      <div key={check.check_id} className="border p-4 md:p-5" style={checklistCardTone(current)}>
+                      <div key={check.check_id} className="border overflow-hidden" style={checklistCardTone(current)}>
+                      <div className="flex min-h-0">
+                        <div className="w-1 shrink-0" style={{ background: cardLeftColor(current) }} />
+                        <div className="flex-1 p-4 md:p-5">
                         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                           <div className="flex-1">
-                            <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>
                               <span>{current.check_id}</span>
                               <span className="border px-2 py-1 text-[9px] tracking-[0.14em]" style={{ borderColor: 'var(--line)', color: 'var(--text-3)' }}>Required</span>
+                              <span className="inline-flex items-center border px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em]" style={severityStyle(current.severity || 'MEDIUM')}>{current.severity || 'MEDIUM'}</span>
                               {isManual && <span className="border border-amber-200/15 px-2 py-1 text-[9px] tracking-[0.14em] text-amber-100/65">Manual</span>}
                             </div>
                             <input
@@ -425,7 +480,7 @@ export default function ChecklistResultPage() {
 
                         <div className="mt-4 grid gap-4 lg:grid-cols-2">
                           <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-                            <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Category</div>
+                            <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Category</div>
                             <input
                               value={current.category}
                               onChange={(event) => updateCheck(index, { category: event.target.value })}
@@ -434,7 +489,7 @@ export default function ChecklistResultPage() {
                             />
                           </div>
                           <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-                            <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Evidence Hint</div>
+                            <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Evidence Hint</div>
                             <textarea
                               value={current.evidence_hint}
                               onChange={(event) => updateCheck(index, { evidence_hint: event.target.value })}
@@ -447,7 +502,7 @@ export default function ChecklistResultPage() {
 
                         <div className="mt-4 grid gap-4 lg:grid-cols-3">
                           <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-                            <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Legal Basis</div>
+                            <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Legal Basis</div>
                             <textarea
                               value={toText(current.legal_basis)}
                               onChange={(event) => updateCheck(index, { legal_basis: toLines(event.target.value) })}
@@ -458,7 +513,7 @@ export default function ChecklistResultPage() {
                             />
                           </div>
                           <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-                            <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Pass Criteria</div>
+                            <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Pass Criteria</div>
                             <textarea
                               value={toText(current.pass_criteria)}
                               onChange={(event) => updateCheck(index, { pass_criteria: toLines(event.target.value) })}
@@ -469,7 +524,7 @@ export default function ChecklistResultPage() {
                             />
                           </div>
                           <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-                            <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Fail Criteria</div>
+                            <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Fail Criteria</div>
                             <textarea
                               value={toText(current.fail_criteria)}
                               onChange={(event) => updateCheck(index, { fail_criteria: toLines(event.target.value) })}
@@ -482,7 +537,7 @@ export default function ChecklistResultPage() {
                         </div>
 
                         <div className="mt-4 border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-                          <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Source Support</div>
+                          <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Source Support</div>
                           <div className="mt-3 grid gap-3">
                             {current.sources.map((source) => {
                               const manualSource = isManualSource(source);
@@ -490,7 +545,10 @@ export default function ChecklistResultPage() {
                                 <div key={`${source.authority}-${source.source_ref}`} className="border p-3" style={{ borderColor: 'var(--line)', background: 'var(--bg)' }}>
                                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                                     <div>
-                                      <div className="text-sm" style={{ color: 'var(--text)' }}>{source.authority}</div>
+                                      <div className="flex items-center gap-2">
+                                        <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>{source.authority}</div>
+                                        <span className="inline-flex items-center border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em]" style={{ borderColor: 'var(--line)', color: 'var(--text-3)' }}>{source.source_type}</span>
+                                      </div>
                                       <div className="mt-1 text-xs" style={{ color: 'var(--text-3)' }}>{source.source_ref}</div>
                                     </div>
                                     {!manualSource && (
@@ -510,6 +568,8 @@ export default function ChecklistResultPage() {
                             })}
                           </div>
                         </div>
+                        </div>{/* end flex-1 content */}
+                      </div>{/* end flex row */}
                       </div>
                     );
                   })}

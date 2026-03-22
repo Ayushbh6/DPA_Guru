@@ -7,13 +7,49 @@
   --bg-2:      #efefef;
   --text:      #0a0a0a;
   --text-2:    #525252;
-  --text-3:    #a3a3a3;
+  --text-3:    #757575;
   --line:      #e5e5e5;
   --line-2:    #d4d4d4;
   --accent:    #4f46e5;
   --accent-fg: #ffffff;
   --invert:    #0a0a0a;
   --invert-fg: #ffffff;
+
+  /* Status — compliant / partial / non-compliant */
+  --status-compliant:       #047857;
+  --status-compliant-bg:    #ecfdf5;
+  --status-partial:         #b45309;
+  --status-partial-bg:      #fffbeb;
+  --status-noncompliant:    #b91c1c;
+  --status-noncompliant-bg: #fef2f2;
+  --status-unknown:         #6b7280;
+  --status-unknown-bg:      #f3f4f6;
+
+  /* Risk — low / medium / high */
+  --risk-low:       #0d9488;
+  --risk-low-bg:    #f0fdfa;
+  --risk-medium:    #b45309;
+  --risk-medium-bg: #fffbeb;
+  --risk-high:      #b91c1c;
+  --risk-high-bg:   #fef2f2;
+
+  /* Severity — mandatory / high / medium / low */
+  --sev-mandatory:    #b91c1c;
+  --sev-mandatory-bg: #fef2f2;
+  --sev-high:         #c2410c;
+  --sev-high-bg:      #fff7ed;
+  --sev-medium:       #b45309;
+  --sev-medium-bg:    #fffbeb;
+  --sev-low:          #0d9488;
+  --sev-low-bg:       #f0fdfa;
+
+  /* Feedback — success / warning / danger */
+  --success:    #047857;
+  --success-bg: #ecfdf5;
+  --warning:    #b45309;
+  --warning-bg: #fffbeb;
+  --danger:     #b91c1c;
+  --danger-bg:  #fef2f2;
 }
 
 /* ── Dark mode ─────────────────────────────── */
@@ -23,13 +59,49 @@
   --bg-2:      #1a1a1a;
   --text:      #fafafa;
   --text-2:    #a3a3a3;
-  --text-3:    #525252;
+  --text-3:    #858585;
   --line:      #262626;
   --line-2:    #404040;
   --accent:    #818cf8;
   --accent-fg: #ffffff;
   --invert:    #fafafa;
   --invert-fg: #0a0a0a;
+
+  /* Status — compliant / partial / non-compliant */
+  --status-compliant:       #6ee7b7;
+  --status-compliant-bg:    rgba(6,78,59,0.25);
+  --status-partial:         #fbbf24;
+  --status-partial-bg:      rgba(120,53,15,0.25);
+  --status-noncompliant:    #fca5a5;
+  --status-noncompliant-bg: rgba(127,29,29,0.25);
+  --status-unknown:         #9ca3af;
+  --status-unknown-bg:      rgba(75,85,99,0.20);
+
+  /* Risk — low / medium / high */
+  --risk-low:       #5eead4;
+  --risk-low-bg:    rgba(13,148,136,0.15);
+  --risk-medium:    #fbbf24;
+  --risk-medium-bg: rgba(120,53,15,0.25);
+  --risk-high:      #fca5a5;
+  --risk-high-bg:   rgba(127,29,29,0.25);
+
+  /* Severity — mandatory / high / medium / low */
+  --sev-mandatory:    #fca5a5;
+  --sev-mandatory-bg: rgba(127,29,29,0.25);
+  --sev-high:         #fdba74;
+  --sev-high-bg:      rgba(154,52,18,0.25);
+  --sev-medium:       #fbbf24;
+  --sev-medium-bg:    rgba(120,53,15,0.25);
+  --sev-low:          #5eead4;
+  --sev-low-bg:       rgba(13,148,136,0.15);
+
+  /* Feedback — success / warning / danger */
+  --success:    #6ee7b7;
+  --success-bg: rgba(6,78,59,0.25);
+  --warning:    #fbbf24;
+  --warning-bg: rgba(120,53,15,0.25);
+  --danger:     #fca5a5;
+  --danger-bg:  rgba(127,29,29,0.25);
 }
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));

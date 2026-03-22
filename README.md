@@ -78,6 +78,10 @@ source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
 
 # Install requirements for API and workers
 pip install -r apps/api/requirements.txt
+
+# start backend
+
+cd apps/api & uvicorn upload_api.main:app --reload --host 127.0.0.1 --port 8001
 ```
 
 ### 4. Database Configuration

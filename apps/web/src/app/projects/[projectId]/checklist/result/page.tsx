@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, CheckCircle2, ExternalLink, LoaderCircle, Plus, Trash2, X } from "lucide-react";
+import { Check, CheckCircle2, Download, ExternalLink, LoaderCircle, Plus, Trash2, X } from "lucide-react";
 import {
   approveChecklist,
   getApprovedChecklist,
@@ -9,6 +9,7 @@ import {
   type ChecklistDraftSource,
   type ChecklistItem,
 } from "@/lib/uploadApi";
+import { downloadChecklistDocx } from "@/lib/docxExport";
 import { useProject } from "../../ProjectProvider";
 
 type ReviewDecision = "accepted" | "rejected";
@@ -139,10 +140,10 @@ function buildApprovalChecks(checks: EditableChecklistRow[]): ChecklistItem[] {
   });
 }
 
-function checklistCardTone(check: EditableChecklistRow) {
+function checklistCardTone(check: EditableChecklistRow): React.CSSProperties {
   return check._decision === "rejected"
-    ? "border-white/5 bg-white/[0.01] opacity-55"
-    : "border-white/10 bg-white/[0.015]";
+    ? { borderColor: 'var(--line)', background: 'var(--bg)', opacity: 0.55 }
+    : { borderColor: 'var(--line)', background: 'var(--bg-2)' };
 }
 
 export default function ChecklistResultPage() {
@@ -156,6 +157,7 @@ export default function ChecklistResultPage() {
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [loadingApproved, setLoadingApproved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -236,18 +238,38 @@ export default function ChecklistResultPage() {
     }
   }
 
+  async function handleExportDocx() {
+    setExporting(true);
+    try {
+      const approvalChecks = buildApprovalChecks(checks);
+      await downloadChecklistDocx({
+        projectName: detail?.project.name || "Project",
+        version: version.trim() || "draft",
+        changeNote: changeNote.trim() || null,
+        selectedSourceIds,
+        checks: approvalChecks,
+        acceptedCount,
+        rejectedCount: checks.length - acceptedCount,
+      });
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : "Failed to export checklist DOCX.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   if (!draftJob?.result && !approvedSummary) {
     return (
-      <div className="border border-white/10 bg-[rgba(8,8,26,0.86)] p-8">
-        <h2 className="text-xl text-white/90">No Results Yet</h2>
-        <p className="mt-2 text-white/50">Please configure and generate the checklist first from the Setup tab.</p>
+      <div className="border p-8" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}>
+        <h2 className="text-xl" style={{ color: 'var(--text)' }}>No Results Yet</h2>
+        <p className="mt-2" style={{ color: 'var(--text-2)' }}>Please configure and generate the checklist first from the Setup tab.</p>
       </div>
     );
   }
 
   if (loadingApproved) {
     return (
-      <div className="flex items-center gap-3 border border-white/10 bg-[rgba(8,8,26,0.86)] p-8 text-white/70">
+      <div className="flex items-center gap-3 border p-8" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)', color: 'var(--text-2)' }}>
         <LoaderCircle className="h-4 w-4 animate-spin" />
         Loading approved checklist...
       </div>
@@ -256,22 +278,16 @@ export default function ChecklistResultPage() {
 
   return (
     <div className="grid gap-6">
-      <section className="overflow-hidden border" style={{ background: "rgba(8,8,26,0.92)", borderColor: "rgba(99,102,241,0.18)" }}>
-        <div
-          className="h-px"
-          style={{
-            background:
-              "linear-gradient(90deg, transparent, rgba(99,102,241,0.55), rgba(139,92,246,0.55), rgba(20,184,166,0.35), transparent)",
-          }}
-        />
+      <section className="overflow-hidden border" style={{ background: 'var(--bg-1)', borderColor: 'var(--line)' }}>
+        <div className="h-px" style={{ background: 'var(--accent)', opacity: 0.4 }} />
         <div className="p-5 md:p-7">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
-              <div className="text-xs uppercase tracking-[0.2em] text-white/35">Checklist Approval</div>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white/92">
+              <div className="text-xs uppercase tracking-[0.2em]" style={{ color: 'var(--text-3)' }}>Checklist Approval</div>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight" style={{ color: 'var(--text)' }}>
                 {approvedSummary ? "Approved Checklist Loaded" : "Review, Keep, Reject, Or Add Checks"}
               </h2>
-              <p className="mt-3 max-w-3xl text-white/45">
+              <p className="mt-3 max-w-3xl" style={{ color: 'var(--text-3)' }}>
                 Every approved check stays required. Use the tick and cross to decide which AI checks survive, or add your own checks manually.
               </p>
             </div>
@@ -286,44 +302,57 @@ export default function ChecklistResultPage() {
             )}
           </div>
 
-          <div className="mt-6 grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-            <div className="border border-white/10 bg-white/[0.02] p-4">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Version</div>
+          <div className="mt-6 grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]">
+            <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
+              <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Version</div>
               <input
                 value={version}
                 onChange={(event) => setVersion(event.target.value)}
-                className="mt-3 w-full border border-white/10 bg-black/15 px-3 py-2 text-sm text-white/85 outline-none"
+                className="mt-3 w-full border px-3 py-2 text-sm outline-none"
+                style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
               />
             </div>
-            <div className="border border-white/10 bg-white/[0.02] p-4">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Change Note</div>
+            <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
+              <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Change Note</div>
               <input
                 value={changeNote}
                 onChange={(event) => setChangeNote(event.target.value)}
-                className="mt-3 w-full border border-white/10 bg-black/15 px-3 py-2 text-sm text-white/85 outline-none"
+                className="mt-3 w-full border px-3 py-2 text-sm outline-none"
+                style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
                 placeholder="Optional note about what changed before approval."
               />
             </div>
             <button
               type="button"
               onClick={addManualRow}
-              className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/82 transition-colors hover:bg-white/[0.08]"
+              className="inline-flex items-center justify-center gap-2 border px-4 py-3 text-sm transition-colors"
+              style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text)' }}
             >
               <Plus className="h-4 w-4" />
               Add Check
             </button>
+            <button
+              type="button"
+              onClick={() => void handleExportDocx()}
+              disabled={exporting || acceptedCount === 0}
+              className="inline-flex items-center justify-center gap-2 border px-4 py-3 text-sm transition-colors disabled:opacity-50"
+              style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text)' }}
+            >
+              {exporting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Download DOCX
+            </button>
           </div>
 
-          <div className="mt-4 flex items-center gap-3 text-sm text-white/55">
+          <div className="mt-4 flex items-center gap-3 text-sm" style={{ color: 'var(--text-3)' }}>
             <span>{acceptedCount} accepted</span>
-            <span className="text-white/20">/</span>
+            <span style={{ opacity: 0.4 }}>/</span>
             <span>{checks.length - acceptedCount} rejected</span>
           </div>
 
           <div className="mt-8 grid gap-8">
             {groupedChecks.map(([category, grouped]) => (
               <div key={category}>
-                <div className="text-xs uppercase tracking-[0.2em] text-white/35">{category}</div>
+                <div className="text-xs uppercase tracking-[0.2em]" style={{ color: 'var(--text-3)' }}>{category}</div>
                 <div className="mt-4 grid gap-4">
                   {grouped.map((check) => {
                     const index = checks.findIndex((item) => item.check_id === check.check_id);
@@ -332,18 +361,19 @@ export default function ChecklistResultPage() {
                     const isRejected = current?._decision === "rejected";
 
                     return (
-                      <div key={check.check_id} className={`border p-4 md:p-5 ${checklistCardTone(current)}`}>
+                      <div key={check.check_id} className="border p-4 md:p-5" style={checklistCardTone(current)}>
                         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                           <div className="flex-1">
-                            <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
+                            <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>
                               <span>{current.check_id}</span>
-                              <span className="border border-white/10 px-2 py-1 text-[9px] tracking-[0.14em] text-white/55">Required</span>
+                              <span className="border px-2 py-1 text-[9px] tracking-[0.14em]" style={{ borderColor: 'var(--line)', color: 'var(--text-3)' }}>Required</span>
                               {isManual && <span className="border border-amber-200/15 px-2 py-1 text-[9px] tracking-[0.14em] text-amber-100/65">Manual</span>}
                             </div>
                             <input
                               value={current.title}
                               onChange={(event) => updateCheck(index, { title: event.target.value })}
-                              className="mt-2 w-full border border-white/10 bg-black/15 px-3 py-2 text-lg text-white/90 outline-none"
+                              className="mt-2 w-full border px-3 py-2 text-lg outline-none"
+                              style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
                               placeholder="Checklist title"
                             />
                           </div>
@@ -351,7 +381,8 @@ export default function ChecklistResultPage() {
                             <select
                               value={current.severity || "MEDIUM"}
                               onChange={(event) => updateCheck(index, { severity: event.target.value })}
-                              className="border border-white/10 bg-black/15 px-3 py-2 text-sm text-white/85 outline-none"
+                              className="border px-3 py-2 text-sm outline-none"
+                              style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
                             >
                               <option value="LOW">LOW</option>
                               <option value="MEDIUM">MEDIUM</option>
@@ -362,9 +393,8 @@ export default function ChecklistResultPage() {
                               <button
                                 type="button"
                                 onClick={() => setDecision(index, "accepted")}
-                                className={`inline-flex flex-1 items-center justify-center gap-2 border px-3 py-2 text-sm transition-colors ${
-                                  !isRejected ? "border-emerald-300/30 bg-emerald-300/10 text-emerald-50" : "border-white/10 text-white/70 hover:bg-white/5"
-                                }`}
+                                className="inline-flex flex-1 items-center justify-center gap-2 border px-3 py-2 text-sm transition-colors"
+                                style={!isRejected ? { borderColor: 'rgba(110,231,183,0.3)', background: 'rgba(110,231,183,0.1)', color: 'var(--text)' } : { borderColor: 'var(--line)', color: 'var(--text-2)' }}
                               >
                                 <Check className="h-4 w-4" />
                                 Accept
@@ -372,9 +402,8 @@ export default function ChecklistResultPage() {
                               <button
                                 type="button"
                                 onClick={() => setDecision(index, "rejected")}
-                                className={`inline-flex flex-1 items-center justify-center gap-2 border px-3 py-2 text-sm transition-colors ${
-                                  isRejected ? "border-rose-300/30 bg-rose-300/10 text-rose-50" : "border-white/10 text-white/70 hover:bg-white/5"
-                                }`}
+                                className="inline-flex flex-1 items-center justify-center gap-2 border px-3 py-2 text-sm transition-colors"
+                                style={isRejected ? { borderColor: 'rgba(253,164,175,0.3)', background: 'rgba(253,164,175,0.1)', color: 'var(--text)' } : { borderColor: 'var(--line)', color: 'var(--text-2)' }}
                               >
                                 <X className="h-4 w-4" />
                                 Reject
@@ -383,7 +412,8 @@ export default function ChecklistResultPage() {
                                 <button
                                   type="button"
                                   onClick={() => removeRow(index)}
-                                  className="inline-flex items-center justify-center border border-white/10 px-3 py-2 text-white/70 transition-colors hover:bg-white/5"
+                                  className="inline-flex items-center justify-center border px-3 py-2 transition-colors"
+                                  style={{ borderColor: 'var(--line)', color: 'var(--text-2)' }}
                                   aria-label={`Delete ${current.check_id}`}
                                 >
                                   <Trash2 className="h-4 w-4" />
@@ -394,82 +424,87 @@ export default function ChecklistResultPage() {
                         </div>
 
                         <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                          <div className="border border-white/10 bg-black/15 p-4">
-                            <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Category</div>
+                          <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
+                            <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Category</div>
                             <input
                               value={current.category}
                               onChange={(event) => updateCheck(index, { category: event.target.value })}
-                              className="mt-3 w-full border border-white/10 bg-black/20 px-3 py-2 text-sm text-white/80 outline-none"
+                              className="mt-3 w-full border px-3 py-2 text-sm outline-none"
+                              style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
                             />
                           </div>
-                          <div className="border border-white/10 bg-black/15 p-4">
-                            <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Evidence Hint</div>
+                          <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
+                            <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Evidence Hint</div>
                             <textarea
                               value={current.evidence_hint}
                               onChange={(event) => updateCheck(index, { evidence_hint: event.target.value })}
                               rows={4}
-                              className="mt-3 w-full border border-white/10 bg-black/20 px-3 py-2 text-sm text-white/80 outline-none"
+                              className="mt-3 w-full border px-3 py-2 text-sm outline-none"
+                              style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
                             />
                           </div>
                         </div>
 
                         <div className="mt-4 grid gap-4 lg:grid-cols-3">
-                          <div className="border border-white/10 bg-black/15 p-4">
-                            <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Legal Basis</div>
+                          <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
+                            <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Legal Basis</div>
                             <textarea
                               value={toText(current.legal_basis)}
                               onChange={(event) => updateCheck(index, { legal_basis: toLines(event.target.value) })}
                               rows={5}
-                              className="mt-3 w-full border border-white/10 bg-black/20 px-3 py-2 text-sm text-white/80 outline-none"
+                              className="mt-3 w-full border px-3 py-2 text-sm outline-none"
+                              style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
                               placeholder="One line per legal basis entry"
                             />
                           </div>
-                          <div className="border border-white/10 bg-black/15 p-4">
-                            <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Pass Criteria</div>
+                          <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
+                            <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Pass Criteria</div>
                             <textarea
                               value={toText(current.pass_criteria)}
                               onChange={(event) => updateCheck(index, { pass_criteria: toLines(event.target.value) })}
                               rows={5}
-                              className="mt-3 w-full border border-white/10 bg-black/20 px-3 py-2 text-sm text-white/80 outline-none"
+                              className="mt-3 w-full border px-3 py-2 text-sm outline-none"
+                              style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
                               placeholder="One line per pass condition"
                             />
                           </div>
-                          <div className="border border-white/10 bg-black/15 p-4">
-                            <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Fail Criteria</div>
+                          <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
+                            <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Fail Criteria</div>
                             <textarea
                               value={toText(current.fail_criteria)}
                               onChange={(event) => updateCheck(index, { fail_criteria: toLines(event.target.value) })}
                               rows={5}
-                              className="mt-3 w-full border border-white/10 bg-black/20 px-3 py-2 text-sm text-white/80 outline-none"
+                              className="mt-3 w-full border px-3 py-2 text-sm outline-none"
+                              style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
                               placeholder="One line per fail condition"
                             />
                           </div>
                         </div>
 
-                        <div className="mt-4 border border-white/10 bg-black/15 p-4">
-                          <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Source Support</div>
+                        <div className="mt-4 border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
+                          <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Source Support</div>
                           <div className="mt-3 grid gap-3">
                             {current.sources.map((source) => {
                               const manualSource = isManualSource(source);
                               return (
-                                <div key={`${source.authority}-${source.source_ref}`} className="border border-white/10 bg-white/[0.02] p-3">
+                                <div key={`${source.authority}-${source.source_ref}`} className="border p-3" style={{ borderColor: 'var(--line)', background: 'var(--bg)' }}>
                                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                                     <div>
-                                      <div className="text-sm text-white/82">{source.authority}</div>
-                                      <div className="mt-1 text-xs text-white/40">{source.source_ref}</div>
+                                      <div className="text-sm" style={{ color: 'var(--text)' }}>{source.authority}</div>
+                                      <div className="mt-1 text-xs" style={{ color: 'var(--text-3)' }}>{source.source_ref}</div>
                                     </div>
                                     {!manualSource && (
                                       <a
                                         href={source.source_url}
                                         target="_blank"
                                         rel="noreferrer"
-                                        className="inline-flex items-center gap-1 text-xs text-white/60 transition-colors hover:text-white"
+                                        className="inline-flex items-center gap-1 text-xs transition-colors" style={{ color: 'var(--text-2)' }}
                                       >
                                         Open Source <ExternalLink className="h-3 w-3" />
                                       </a>
                                     )}
                                   </div>
-                                  <div className="mt-3 text-sm leading-relaxed text-white/72">{source.source_excerpt}</div>
+                                  <div className="mt-3 text-sm leading-relaxed" style={{ color: 'var(--text-2)' }}>{source.source_excerpt}</div>
                                 </div>
                               );
                             })}
@@ -484,12 +519,13 @@ export default function ChecklistResultPage() {
           </div>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm text-white/45">Only accepted checks will be stored in the approved checklist version.</div>
+            <div className="text-sm" style={{ color: 'var(--text-3)' }}>Only accepted checks will be stored in the approved checklist version.</div>
             <button
               type="button"
               onClick={() => void handleApprove()}
               disabled={saving || !version.trim() || acceptedCount === 0}
-              className="inline-flex items-center gap-2 bg-white px-4 py-2 text-sm font-medium text-black transition-opacity disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium transition-opacity disabled:opacity-50"
+              style={{ background: 'var(--invert)', color: 'var(--invert-fg)' }}
             >
               {saving && <LoaderCircle className="h-4 w-4 animate-spin" />}
               {approvedSummary ? "Save Approved Version" : "Approve Checklist"}

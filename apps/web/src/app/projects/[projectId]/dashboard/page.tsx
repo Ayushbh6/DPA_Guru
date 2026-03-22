@@ -97,19 +97,19 @@ export default function DashboardPage() {
   return (
     <div className="grid gap-6">
       {uploadError && document && (
-        <div className="border border-red-300/20 bg-red-400/5 px-4 py-3 text-sm text-red-100/85">
+        <div className="border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-500">
           {uploadError}
         </div>
       )}
 
       {!document && (
-        <section className="border border-white/10 bg-[rgba(8,8,26,0.86)] p-8 md:p-12">
+        <section className="p-8 md:p-12" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
           <div className="max-w-3xl">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-white/38">Empty Project</div>
-            <h2 className="mt-4 text-4xl font-semibold tracking-tight text-white/95 md:text-5xl">
+            <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'var(--text-3)' }}>Empty Project</div>
+            <h2 className="mt-4 text-4xl font-semibold tracking-tight md:text-5xl" style={{ color: 'var(--text)' }}>
               Upload the DPA that this analysis session will own.
             </h2>
-            <p className="mt-4 max-w-2xl text-base leading-7 text-white/48">
+            <p className="mt-4 max-w-2xl text-base leading-7" style={{ color: 'var(--text-3)' }}>
               This is now a saved workspace. Once a file is uploaded, parsing and checklist generation stay attached to this project.
             </p>
           </div>
@@ -129,8 +129,8 @@ export default function DashboardPage() {
           <div
             className="mt-8 border border-dashed px-6 py-14 transition-all cursor-pointer"
             style={{
-              borderColor: isDragging ? "rgba(99,102,241,0.6)" : "rgba(255,255,255,0.12)",
-              background: isDragging ? "rgba(99,102,241,0.08)" : "rgba(255,255,255,0.015)",
+              borderColor: isDragging ? 'var(--accent)' : 'var(--line-2)',
+              background: isDragging ? 'color-mix(in srgb, var(--accent) 5%, transparent)' : 'var(--bg-2)',
             }}
             onClick={() => fileInputRef.current?.click()}
             onDragOver={(event) => {
@@ -149,101 +149,91 @@ export default function DashboardPage() {
             }}
           >
             <div className="mx-auto flex max-w-2xl flex-col items-center text-center pointer-events-none">
-              <div className="flex h-16 w-16 items-center justify-center border border-white/10 bg-white/[0.03]">
-                <Upload className="h-7 w-7 text-white/68" />
+              <div className="flex h-16 w-16 items-center justify-center" style={{ border: '1px solid var(--line)', background: 'var(--bg-2)' }}>
+                <Upload className="h-7 w-7" style={{ color: 'var(--text-2)' }} />
               </div>
-              <div className="mt-6 text-xl font-medium text-white/88">Drop a single DPA here or click to select a file</div>
-              <div className="mt-3 text-sm text-white/45">PDF or DOCX • Single file • Max {MAX_UPLOAD_MB}MB</div>
+              <div className="mt-6 text-xl font-medium" style={{ color: 'var(--text)' }}>Drop a single DPA here or click to select a file</div>
+              <div className="mt-3 text-sm" style={{ color: 'var(--text-3)' }}>PDF or DOCX • Single file • Max {MAX_UPLOAD_MB}MB</div>
             </div>
           </div>
 
-          {uploadError && <div className="mt-4 border border-red-300/20 bg-red-400/5 px-4 py-3 text-sm text-red-100/85">{uploadError}</div>}
+          {uploadError && <div className="mt-4 border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-500">{uploadError}</div>}
         </section>
       )}
 
       {document && (
         <>
-          <section className="border overflow-hidden" style={{ background: "rgba(8,8,26,0.9)", borderColor: "rgba(99,102,241,0.18)" }}>
-            <div
-              className="h-px"
-              style={{
-                background:
-                  "linear-gradient(90deg, transparent, rgba(99,102,241,0.55), rgba(139,92,246,0.55), rgba(20,184,166,0.35), transparent)",
-              }}
-            />
+          <section className="border overflow-hidden" style={{ background: 'var(--bg-1)', borderColor: 'var(--line)' }}>
+            <div className="h-px" style={{ background: 'var(--line-2)' }} />
             <div className="p-5 md:p-7">
               <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div>
-                  <div className="text-xs uppercase tracking-[0.2em] text-white/35">Project Document</div>
-                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white/92 md:text-4xl">{document.filename}</h2>
-                  <p className="mt-3 max-w-3xl text-white/45">
+                  <div className="text-xs uppercase tracking-[0.2em]" style={{ color: 'var(--text-3)' }}>Project Document</div>
+                  <h2 className="mt-2 text-2xl font-semibold tracking-tight md:text-4xl" style={{ color: 'var(--text)' }}>{document.filename}</h2>
+                  <p className="mt-3 max-w-3xl" style={{ color: 'var(--text-3)' }}>
                     The parsed DPA and every derived workflow artifact now belong to this project workspace.
                   </p>
                 </div>
-                <div className="border border-white/10 bg-white/[0.02] px-4 py-3 text-sm min-w-[220px]">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Document</div>
-                  <div className="mt-1 break-all text-white/70">{document.document_id}</div>
+                <div className="px-4 py-3 text-sm min-w-[220px]" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Document</div>
+                  <div className="mt-1 break-all" style={{ color: 'var(--text-2)' }}>{document.document_id}</div>
                 </div>
               </div>
 
               <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="border border-white/10 bg-white/[0.015] p-4">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Parse Status</div>
-                  <div className="mt-2 text-sm text-white/85">{formatStatus(document.parse_status || "UNKNOWN")}</div>
+                <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Parse Status</div>
+                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{formatStatus(document.parse_status || "UNKNOWN")}</div>
                 </div>
-                <div className="border border-white/10 bg-white/[0.015] p-4">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Pages</div>
-                  <div className="mt-2 text-sm text-white/85">{formatNumber(document.page_count)}</div>
+                <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Pages</div>
+                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{formatNumber(document.page_count)}</div>
                 </div>
-                <div className="border border-white/10 bg-white/[0.015] p-4">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Parser Route</div>
-                  <div className="mt-2 text-sm text-white/85">{document.parser_route || "Pending"}</div>
+                <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Parser Route</div>
+                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{document.parser_route || "Pending"}</div>
                 </div>
-                <div className="border border-white/10 bg-white/[0.015] p-4">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Token Estimate</div>
-                  <div className="mt-2 text-sm text-white/85">{formatNumber(document.token_count_estimate)}</div>
+                <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Token Estimate</div>
+                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{formatNumber(document.token_count_estimate)}</div>
                 </div>
               </div>
             </div>
           </section>
 
           {parseJob && parseJob.status !== "COMPLETED" && (
-            <section className="border p-5 md:p-7" style={{ background: "rgba(7,7,22,0.88)", borderColor: "rgba(255,255,255,0.08)" }}>
+            <section className="border p-5 md:p-7" style={{ background: 'var(--bg-1)', borderColor: 'var(--line)' }}>
               <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-white/35">Document Processing</div>
+                  <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Document Processing</div>
                   <div className="mt-2 flex items-center gap-3">
                     {parseJob.status === "FAILED" ? (
-                      <X className="h-5 w-5 text-red-300" />
+                      <X className="h-5 w-5 text-red-500" />
                     ) : (
-                      <LoaderCircle className="h-5 w-5 animate-spin text-white/75" />
+                      <LoaderCircle className="h-5 w-5 animate-spin" style={{ color: 'var(--text-2)' }} />
                     )}
-                    <h2 className="text-xl text-white/90">{formatParseStage(parseJob.stage)}</h2>
+                    <h2 className="text-xl" style={{ color: 'var(--text)' }}>{formatParseStage(parseJob.stage)}</h2>
                   </div>
-                  <p className="mt-3 max-w-3xl text-sm text-white/45">{parseJob.message || "Processing the uploaded DPA."}</p>
+                  <p className="mt-3 max-w-3xl text-sm" style={{ color: 'var(--text-3)' }}>{parseJob.message || "Processing the uploaded DPA."}</p>
                 </div>
-                <div className="border border-white/10 bg-white/[0.02] px-4 py-3 text-sm min-w-[220px]">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Upload Job</div>
-                  <div className="mt-1 break-all text-white/70">{parseJob.job_id}</div>
+                <div className="px-4 py-3 text-sm min-w-[220px]" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Upload Job</div>
+                  <div className="mt-1 break-all" style={{ color: 'var(--text-2)' }}>{parseJob.job_id}</div>
                 </div>
               </div>
 
-              <div className="mt-6 border border-white/10 bg-white/[0.02] p-4">
-                <div className="flex items-center justify-between text-xs uppercase tracking-[0.18em] text-white/35">
+              <div className="mt-6 p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                <div className="flex items-center justify-between text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>
                   <span>Progress</span>
                   <span>{Math.max(0, Math.min(100, parseJob.progress_pct || 0))}%</span>
                 </div>
-                <div className="mt-3 h-[6px] bg-white/5 overflow-hidden">
+                <div className="mt-3 h-[4px] overflow-hidden" style={{ background: 'var(--bg-2)' }}>
                   <motion.div
                     initial={false}
                     animate={{ width: `${Math.max(2, Math.min(100, parseJob.progress_pct || 0))}%` }}
                     transition={{ duration: 0.35, ease: "easeOut" }}
                     className="h-full"
-                    style={{
-                      background:
-                        "linear-gradient(90deg, rgba(99,102,241,0.95), rgba(139,92,246,0.95), rgba(20,184,166,0.85))",
-                      boxShadow: "0 0 22px rgba(99,102,241,0.45)",
-                    }}
+                    style={{ background: 'var(--accent)' }}
                   />
                 </div>
               </div>

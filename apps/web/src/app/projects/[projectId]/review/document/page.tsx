@@ -114,7 +114,7 @@ export default function ReviewDocumentViewerPage() {
 
   if (!document) {
     return (
-      <section className="border border-white/10 bg-[rgba(8,8,26,0.88)] px-6 py-8 text-white/78">
+      <section className="border px-6 py-8" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)', color: 'var(--text-2)' }}>
         No project document was found.
       </section>
     );
@@ -125,12 +125,12 @@ export default function ReviewDocumentViewerPage() {
 
   return (
     <div className="grid gap-5 pb-6">
-      <section className="border border-white/10 bg-[rgba(8,8,26,0.88)] px-6 py-5">
+      <section className="border px-6 py-5" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}>
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">DPA Viewer</div>
-            <h2 className="mt-2 text-2xl font-semibold text-white/92">{document.filename}</h2>
-            <div className="mt-2 text-sm text-white/52">
+            <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>DPA Viewer</div>
+            <h2 className="mt-2 text-2xl font-semibold" style={{ color: 'var(--text)' }}>{document.filename}</h2>
+            <div className="mt-2 text-sm" style={{ color: 'var(--text-2)' }}>
               Page {currentPage}
               {pageCount ? ` of ${pageCount}` : ""}
             </div>
@@ -140,7 +140,8 @@ export default function ReviewDocumentViewerPage() {
               type="button"
               onClick={() => canGoPrev && setCurrentPage((page) => Math.max(1, page - 1))}
               disabled={!canGoPrev}
-              className="inline-flex items-center gap-2 border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm text-white/82 transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-2 border px-4 py-2.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
             >
               <ChevronLeft className="h-4 w-4" />
               Previous
@@ -149,14 +150,16 @@ export default function ReviewDocumentViewerPage() {
               type="button"
               onClick={() => canGoNext && setCurrentPage((page) => page + 1)}
               disabled={!canGoNext}
-              className="inline-flex items-center gap-2 border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm text-white/82 transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-2 border px-4 py-2.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
             >
               Next
               <ChevronRight className="h-4 w-4" />
             </button>
             <Link
               href={`/projects/${projectId}/review/report`}
-              className="inline-flex items-center gap-2 border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm text-white/82 transition-colors hover:bg-white/[0.06]"
+              className="inline-flex items-center gap-2 border px-4 py-2.5 text-sm transition-colors"
+              style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
             >
               Back to Report
             </Link>
@@ -165,7 +168,7 @@ export default function ReviewDocumentViewerPage() {
       </section>
 
       {loading ? (
-        <div className="flex items-center gap-3 border border-white/10 bg-[rgba(8,8,26,0.88)] p-6 text-white/70">
+        <div className="flex items-center gap-3 border p-6" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)', color: 'var(--text-2)' }}>
           <LoaderCircle className="h-4 w-4 animate-spin" />
           Rendering PDF page...
         </div>
@@ -178,7 +181,7 @@ export default function ReviewDocumentViewerPage() {
         </div>
       ) : null}
 
-      <section className="overflow-auto border border-white/10 bg-[rgba(8,8,26,0.88)] px-6 py-6">
+      <section className="overflow-auto border px-6 py-6" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}>
         <div className="mx-auto w-fit bg-white p-3 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
           <canvas ref={canvasRef} />
         </div>

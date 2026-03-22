@@ -26,7 +26,7 @@ const STATUS_STYLES: Record<string, string> = {
   COMPLIANT: "border-emerald-400/25 bg-emerald-400/10 text-emerald-100",
   NON_COMPLIANT: "border-red-400/25 bg-red-400/10 text-red-100",
   PARTIAL: "border-amber-400/25 bg-amber-400/10 text-amber-100",
-  UNKNOWN: "border-white/15 bg-white/6 text-white/78",
+  UNKNOWN: "border-neutral-400/20 bg-neutral-400/10 text-neutral-500",
 };
 
 const RISK_STYLES: Record<string, string> = {
@@ -82,7 +82,7 @@ export function useReviewElapsed(startedAt?: string | null, completedAt?: string
 }
 
 function badgeClass(base: string, value: string, styles: Record<string, string>) {
-  return `${base} ${styles[value] ?? "border-white/15 bg-white/[0.05] text-white/78"}`;
+  return `${base} ${styles[value] ?? "border-neutral-400/20 bg-neutral-400/10 text-neutral-500"}`;
 }
 
 export function StatusBadge({ value }: { value: string }) {
@@ -132,7 +132,7 @@ function findingBorderTone(finding: AnalysisFindingDetail) {
   if (finding.assessment.status === "NON_COMPLIANT") return "border-red-400/20";
   if (finding.assessment.status === "PARTIAL") return "border-amber-400/20";
   if (finding.assessment.status === "COMPLIANT") return "border-emerald-400/20";
-  return "border-white/10";
+  return "border-neutral-400/20";
 }
 
 export function ReviewHero({
@@ -150,22 +150,20 @@ export function ReviewHero({
         : "border-emerald-400/20 bg-emerald-400/10 text-emerald-100";
 
   return (
-    <section className="relative overflow-hidden border border-white/10 bg-[linear-gradient(180deg,rgba(9,10,29,0.96)_0%,rgba(7,7,18,0.96)_100%)] px-6 py-7 md:px-8 md:py-8">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -right-16 top-0 h-56 w-56 bg-[radial-gradient(circle,rgba(99,102,241,0.18),transparent_62%)]" />
-        <div className="absolute bottom-0 left-0 h-48 w-48 bg-[radial-gradient(circle,rgba(16,185,129,0.12),transparent_60%)]" />
-      </div>
-
+    <section className="relative overflow-hidden px-6 py-7 md:px-8 md:py-8" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
       <div className="relative z-10 grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_320px]">
         <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-white/55">
+          <div
+            className="inline-flex items-center gap-2 px-3 py-1 text-[11px] uppercase tracking-[0.2em]"
+            style={{ border: '1px solid var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
+          >
             <Sparkles className="h-3.5 w-3.5" />
             Final Review Report
           </div>
-          <h2 className="mt-5 max-w-4xl text-3xl font-semibold leading-tight text-white/95 md:text-[2.5rem]">
+          <h2 className="mt-5 max-w-4xl text-3xl font-semibold leading-tight md:text-[2.5rem]" style={{ color: 'var(--text)' }}>
             {report.overall.summary}
           </h2>
-          <p className="mt-5 max-w-4xl text-sm leading-7 text-white/62 md:text-[15px]">{report.risk_rationale}</p>
+          <p className="mt-5 max-w-4xl text-sm leading-7 md:text-[15px]" style={{ color: 'var(--text-2)' }}>{report.risk_rationale}</p>
         </div>
 
         <div className="grid gap-3">
@@ -175,16 +173,16 @@ export function ReviewHero({
             <div className="mt-2 text-sm text-inherit/75">Score {Math.round(report.overall.score)}</div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="border border-white/10 bg-white/[0.03] px-4 py-4">
-              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-white/40">
+            <div className="px-4 py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>
                 <Clock3 className="h-3.5 w-3.5" />
                 Review Time
               </div>
-              <div className="mt-3 text-xl font-medium text-white/90">{elapsed}</div>
+              <div className="mt-3 text-xl font-medium" style={{ color: 'var(--text)' }}>{elapsed}</div>
             </div>
-            <div className="border border-white/10 bg-white/[0.03] px-4 py-4">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-white/40">Coverage</div>
-              <div className="mt-3 text-xl font-medium text-white/90">{report.checks.length} checks</div>
+            <div className="px-4 py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+              <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Coverage</div>
+              <div className="mt-3 text-xl font-medium" style={{ color: 'var(--text)' }}>{report.checks.length} checks</div>
             </div>
           </div>
         </div>
@@ -217,23 +215,23 @@ export function ReviewReportView({
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div className="grid gap-6">
-          <div className="border border-white/10 bg-[rgba(8,8,26,0.88)] p-6 md:p-7">
+          <div className="p-6 md:p-7" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
             <div className="grid gap-6 md:grid-cols-2">
               <div>
-                <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">Highlights</div>
+                <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Highlights</div>
                 <div className="mt-4 grid gap-3">
                   {report.highlights.map((item) => (
-                    <div key={item} className="border-l border-emerald-300/25 pl-4 text-sm leading-7 text-white/78">
+                    <div key={item} className="border-l border-emerald-400/40 pl-4 text-sm leading-7" style={{ color: 'var(--text-2)' }}>
                       {item}
                     </div>
                   ))}
                 </div>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">Next Actions</div>
+                <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Next Actions</div>
                 <div className="mt-4 grid gap-3">
                   {report.next_actions.map((item) => (
-                    <div key={item} className="border-l border-amber-300/25 pl-4 text-sm leading-7 text-white/78">
+                    <div key={item} className="border-l border-amber-400/40 pl-4 text-sm leading-7" style={{ color: 'var(--text-2)' }}>
                       {item}
                     </div>
                   ))}
@@ -246,13 +244,14 @@ export function ReviewReportView({
             {findings.map((finding) => (
               <article
                 key={finding.check_id}
-                className={`border bg-[rgba(8,8,24,0.92)] p-5 md:p-6 ${findingBorderTone(finding)}`}
+                className={`border p-5 md:p-6 ${findingBorderTone(finding)}`}
+                style={{ background: 'var(--bg-1)' }}
               >
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0">
-                    <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">{finding.check_id}</div>
-                    <h3 className="mt-3 text-2xl leading-tight text-white/94">{finding.title}</h3>
-                    <div className="mt-2 text-sm text-white/45">{finding.category}</div>
+                    <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>{finding.check_id}</div>
+                    <h3 className="mt-3 text-2xl leading-tight" style={{ color: 'var(--text)' }}>{finding.title}</h3>
+                    <div className="mt-2 text-sm" style={{ color: 'var(--text-3)' }}>{finding.category}</div>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <StatusBadge value={finding.assessment.status} />
@@ -261,7 +260,7 @@ export function ReviewReportView({
                   </div>
                 </div>
 
-                <div className="mt-6 text-sm leading-8 text-white/76">{finding.assessment.risk_rationale}</div>
+                <div className="mt-6 text-sm leading-8" style={{ color: 'var(--text-2)' }}>{finding.assessment.risk_rationale}</div>
 
                 {finding.assessment.abstain_reason && (
                   <div className="mt-5 flex gap-3 border border-amber-400/15 bg-amber-400/7 p-4 text-sm text-amber-50/85">
@@ -274,25 +273,28 @@ export function ReviewReportView({
                   <div className="grid gap-5">
                     {!!finding.assessment.evidence_quotes.length && (
                       <div>
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">Evidence Quotes</div>
+                        <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Evidence Quotes</div>
                         <div className="mt-3 grid gap-3">
                           {finding.assessment.evidence_quotes.map((quote, index) => (
-                            <div key={`${finding.check_id}-${quote.page}-${index}`} className="border border-white/10 bg-black/15 p-4">
+                            <div key={`${finding.check_id}-${quote.page}-${index}`} className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
                               <div className="flex items-center justify-between gap-4">
-                                <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">Page {quote.page}</div>
+                                <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Page {quote.page}</div>
                                 {supportsDocumentOpen ? (
                                   <a
                                     href={getProjectDocumentViewerUrl(projectId, supportsPageJump ? quote.page : undefined)}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.18em] text-white/55 transition-colors hover:text-white/82"
+                                    className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.18em] transition-colors"
+                                    style={{ color: 'var(--text-3)' }}
+                                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-2)')}
+                                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
                                   >
                                     Open in DPA
                                     <ArrowUpRight className="h-3 w-3" />
                                   </a>
                                 ) : null}
                               </div>
-                              <div className="mt-3 text-sm leading-8 text-white/75">{quote.quote}</div>
+                              <div className="mt-3 text-sm leading-8" style={{ color: 'var(--text-2)' }}>{quote.quote}</div>
                             </div>
                           ))}
                         </div>
@@ -301,17 +303,17 @@ export function ReviewReportView({
 
                     {!!finding.assessment.kb_citations.length && (
                       <div>
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">Knowledge Base Citations</div>
+                        <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Knowledge Base Citations</div>
                         <div className="mt-3 grid gap-3">
                           {finding.assessment.kb_citations.map((citation, index) => (
-                            <div key={`${finding.check_id}-${citation.source_id}-${index}`} className="border border-white/10 bg-black/15 p-4">
+                            <div key={`${finding.check_id}-${citation.source_id}-${index}`} className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
                               <div className="flex items-start justify-between gap-4">
                                 <div>
-                                  <div className="text-sm text-white/88">{citation.source_ref}</div>
-                                  <div className="mt-1 text-xs text-white/40">{citation.source_id}</div>
+                                  <div className="text-sm" style={{ color: 'var(--text)' }}>{citation.source_ref}</div>
+                                  <div className="mt-1 text-xs" style={{ color: 'var(--text-3)' }}>{citation.source_id}</div>
                                 </div>
                               </div>
-                              <div className="mt-3 text-sm leading-8 text-white/72">{citation.source_excerpt}</div>
+                              <div className="mt-3 text-sm leading-8" style={{ color: 'var(--text-2)' }}>{citation.source_excerpt}</div>
                             </div>
                           ))}
                         </div>
@@ -320,18 +322,18 @@ export function ReviewReportView({
                   </div>
 
                   <aside className="grid content-start gap-3">
-                    <div className="border border-white/10 bg-white/[0.03] p-4">
-                      <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">Citation Pages</div>
-                      <div className="mt-3 text-sm text-white/84">
+                    <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                      <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Citation Pages</div>
+                      <div className="mt-3 text-sm" style={{ color: 'var(--text)' }}>
                         {finding.citation_pages.length ? finding.citation_pages.join(", ") : "No mapped pages"}
                       </div>
                     </div>
                     {!!finding.assessment.missing_elements.length && (
-                      <div className="border border-white/10 bg-white/[0.03] p-4">
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">Missing Elements</div>
+                      <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                        <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Missing Elements</div>
                         <div className="mt-3 grid gap-2">
                           {finding.assessment.missing_elements.map((item) => (
-                            <div key={`${finding.check_id}-${item}`} className="text-sm leading-7 text-white/74">
+                            <div key={`${finding.check_id}-${item}`} className="text-sm leading-7" style={{ color: 'var(--text-2)' }}>
                               {item}
                             </div>
                           ))}
@@ -346,30 +348,31 @@ export function ReviewReportView({
         </div>
 
         <aside className="grid content-start gap-4 xl:sticky xl:top-0">
-          <div className="border border-white/10 bg-[rgba(8,8,26,0.88)] p-5">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-white/35">
+          <div className="p-5" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>
               <FileText className="h-3.5 w-3.5" />
               Report Snapshot
             </div>
             <div className="mt-4 grid gap-3">
-              <div className="border border-white/10 bg-white/[0.03] px-4 py-3">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">Overall Confidence</div>
-                <div className="mt-2 text-lg text-white/88">{Math.round(report.confidence * 100)}%</div>
+              <div className="px-4 py-3" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Overall Confidence</div>
+                <div className="mt-2 text-lg" style={{ color: 'var(--text)' }}>{Math.round(report.confidence * 100)}%</div>
               </div>
-              <div className="border border-white/10 bg-white/[0.03] px-4 py-3">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">Review State</div>
-                <div className="mt-2 text-lg text-white/88">{report.review_state}</div>
+              <div className="px-4 py-3" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Review State</div>
+                <div className="mt-2 text-lg" style={{ color: 'var(--text)' }}>{report.review_state}</div>
               </div>
-              <div className="border border-white/10 bg-white/[0.03] px-4 py-3">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">Review Required</div>
-                <div className="mt-2 text-lg text-white/88">{report.review_required ? "Yes" : "No"}</div>
+              <div className="px-4 py-3" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Review Required</div>
+                <div className="mt-2 text-lg" style={{ color: 'var(--text)' }}>{report.review_required ? "Yes" : "No"}</div>
               </div>
             </div>
           </div>
 
           <Link
             href={`/projects/${projectId}/review`}
-            className="inline-flex items-center justify-between border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/82 transition-colors hover:bg-white/[0.06]"
+            className="inline-flex items-center justify-between border px-4 py-3 text-sm transition-colors"
+            style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
           >
             <span>Back to Review Control</span>
             <ArrowUpRight className="h-4 w-4" />
@@ -390,14 +393,14 @@ export function ReportUnavailable({
   cta?: React.ReactNode;
 }) {
   return (
-    <section className="border border-white/10 bg-[rgba(8,8,26,0.88)] px-6 py-8 md:px-8">
+    <section className="border px-6 py-8 md:px-8" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}>
       <div className="max-w-2xl">
-        <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-white/55">
+        <div className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.2em]" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-3)' }}>
           <ShieldAlert className="h-3.5 w-3.5" />
           Final Review
         </div>
-        <h2 className="mt-5 text-2xl font-semibold text-white/94">{title}</h2>
-        <p className="mt-3 text-sm leading-7 text-white/58">{body}</p>
+        <h2 className="mt-5 text-2xl font-semibold" style={{ color: 'var(--text)' }}>{title}</h2>
+        <p className="mt-3 text-sm leading-7" style={{ color: 'var(--text-2)' }}>{body}</p>
         {cta ? <div className="mt-6">{cta}</div> : null}
       </div>
     </section>
@@ -415,7 +418,7 @@ export function ReportLoadError({ message }: { message: string }) {
 
 export function ReportLoadingState() {
   return (
-    <div className="flex items-center gap-3 border border-white/10 bg-[rgba(8,8,26,0.88)] p-6 text-white/70">
+    <div className="flex items-center gap-3 border p-6" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)', color: 'var(--text-2)' }}>
       <LoaderCircle className="h-4 w-4 animate-spin" />
       Preparing the full review report...
     </div>

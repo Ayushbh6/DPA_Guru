@@ -28,26 +28,24 @@ export default function HeroScroll() {
         },
       });
 
-      // Initial state: Title is visible, document is flat top-down view.
-      
-      // Phase 1: Fade out title, tilt the document into 3D view like an Apple product reveal
+      // Phase 1: Fade out title, tilt the document into 3D view
       tl.to(textRef.current, { opacity: 0, y: -50, filter: "blur(10px)", duration: 1 }, 0);
-      tl.to(bookRef.current, { 
-        rotateX: 60, 
-        rotateZ: -20, 
-        scale: 0.9, 
-        duration: 2, 
-        ease: "power2.inOut" 
+      tl.to(bookRef.current, {
+        rotateX: 60,
+        rotateZ: -20,
+        scale: 0.9,
+        duration: 2,
+        ease: "power2.inOut"
       }, 0);
 
-      // Phase 2: Open the cover elegantly
+      // Phase 2: Open the cover
       tl.to(coverRef.current, {
         rotateY: -160,
         duration: 2,
         ease: "power2.inOut",
       }, 1.5);
 
-      // Phase 3: Animate the glowing scanner line inside the document
+      // Phase 3: Animate the scanner line
       tl.fromTo(scannerRef.current, {
         top: "0%",
         opacity: 0,
@@ -65,24 +63,23 @@ export default function HeroScroll() {
 
   return (
     <div ref={containerRef} className="relative w-full overflow-hidden">
-      <div 
+      <div
         ref={stickyRef}
         className="h-screen w-full flex items-center justify-center relative pt-16"
+        style={{ background: 'var(--bg)' }}
       >
-        {/* Main Title (Fades out) */}
+        {/* Main Title */}
         <div ref={textRef} className="absolute inset-0 flex flex-col items-center justify-center z-20 pointer-events-none">
           <h1
             className="text-7xl md:text-9xl font-bold tracking-tight text-center"
-            style={{
-              background: 'linear-gradient(160deg, #ffffff 0%, rgba(210,210,255,0.9) 45%, rgba(255,255,255,0.75) 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-            }}
+            style={{ color: 'var(--text)' }}
           >
             Merlin AI
           </h1>
-          <p className="text-xs md:text-sm tracking-[0.3em] uppercase font-light mt-28" style={{ color: 'rgba(139,92,246,0.7)' }}>
+          <p
+            className="text-xs md:text-sm tracking-[0.3em] uppercase font-light mt-4"
+            style={{ color: 'var(--accent)' }}
+          >
             DPA Analyzer
           </p>
         </div>
@@ -90,56 +87,79 @@ export default function HeroScroll() {
         {/* 3D Scene */}
         <div className="relative w-full h-full flex items-center justify-center [perspective:2500px] z-10">
 
-          {/* Ambient glow behind the document */}
-          <div className="absolute w-[500px] h-[500px] md:w-[700px] md:h-[700px] bg-[radial-gradient(ellipse,rgba(99,102,241,0.18),transparent_60%)] pointer-events-none translate-y-4" />
-
           {/* The Document Container */}
-          <div 
-            ref={bookRef} 
-            className="relative w-[336px] h-[440px] md:w-[476px] md:h-[622px] translate-y-[8px] md:translate-y-[19px] [transform-style:preserve-3d] shadow-[0_0_0_1px_rgba(99,102,241,0.15),0_30px_120px_rgba(99,102,241,0.12)]"
+          <div
+            ref={bookRef}
+            className="relative w-[336px] h-[440px] md:w-[476px] md:h-[622px] translate-y-[8px] md:translate-y-[19px] [transform-style:preserve-3d]"
+            style={{
+              boxShadow: '0 0 0 1px var(--line), 0 30px 80px rgba(0,0,0,0.2)',
+            }}
           >
-            {/* Back Cover / Inside Glowing Pages */}
-            <div className="absolute inset-0 border overflow-hidden flex flex-col p-6 md:p-10" style={{ background: '#08081a', borderColor: 'rgba(99,102,241,0.2)' }}>
-              <div className="flex items-center justify-between mb-8 border-b border-white/10 pb-4">
-                 <Shield className="w-5 h-5 md:w-6 md:h-6 text-white/30" />
-                 <span className="text-[10px] md:text-xs tracking-widest uppercase text-white/30 font-medium">Analysis Mode</span>
-              </div>
-              
-              {/* Skeleton Document with Glowing Data */}
-              <div className="space-y-5 md:space-y-6 flex-1 relative">
-                 {/* Scanner Line */}
-                 <div ref={scannerRef} className="absolute left-0 right-0 h-[2px] z-20" style={{ top: '0%', background: 'linear-gradient(90deg, transparent, #6366f1, #8b5cf6, #14b8a6, transparent)', boxShadow: '0 0 16px rgba(99,102,241,0.8)' }} />
-
-                 <div className="w-full h-2 md:h-3 bg-white/10" />
-                 <div className="w-3/4 h-2 md:h-3 bg-white/10" />
-                 
-                 {/* Highlighted Risk Clause */}
-                 <div className="w-full h-16 md:h-20 bg-white/5 border-l-2 border-white/40 p-3 relative overflow-hidden flex flex-col justify-center space-y-2">
-                    <div className="w-1/4 h-1.5 md:h-2 bg-white/40" />
-                    <div className="w-full h-1.5 md:h-2 bg-white/20" />
-                    <div className="w-5/6 h-1.5 md:h-2 bg-white/20" />
-                 </div>
-                 
-                 <div className="w-5/6 h-2 md:h-3 bg-white/10" />
-                 <div className="w-full h-2 md:h-3 bg-white/10" />
-                 <div className="w-4/6 h-2 md:h-3 bg-white/10" />
-              </div>
-            </div>
-
-            {/* Front Cover (Glassmorphism) */}
-            <div 
-              ref={coverRef}
-              className="absolute inset-0 origin-left [transform-style:preserve-3d] z-30 flex items-center justify-center shadow-2xl backdrop-blur-xl"
-              style={{ background: 'rgba(6,6,20,0.82)', border: '1px solid rgba(99,102,241,0.22)' }}
+            {/* Back Cover / Inside Pages */}
+            <div
+              className="absolute inset-0 overflow-hidden flex flex-col p-6 md:p-10"
+              style={{ background: 'var(--bg-1)', border: '1px solid var(--line)' }}
             >
-              {/* Outer Glow on Cover */}
-              <div className="absolute inset-0 shadow-[inset_0_0_50px_rgba(255,255,255,0.05)] pointer-events-none" />
-              
-              <div className="flex flex-col items-center">
-                <Shield className="w-10 h-10 md:w-12 md:h-12 text-white/30 stroke-1" />
+              <div
+                className="flex items-center justify-between mb-8 pb-4"
+                style={{ borderBottom: '1px solid var(--line)' }}
+              >
+                <Shield className="w-5 h-5 md:w-6 md:h-6" style={{ color: 'var(--text-3)' }} />
+                <span
+                  className="text-[10px] md:text-xs tracking-widest uppercase font-medium"
+                  style={{ color: 'var(--text-3)' }}
+                >
+                  Analysis Mode
+                </span>
+              </div>
+
+              {/* Skeleton Document with Scanner */}
+              <div className="space-y-5 md:space-y-6 flex-1 relative">
+                {/* Scanner Line */}
+                <div
+                  ref={scannerRef}
+                  className="absolute left-0 right-0 h-px z-20"
+                  style={{
+                    top: '0%',
+                    background: 'var(--accent)',
+                    boxShadow: '0 0 10px 2px var(--accent)',
+                  }}
+                />
+
+                <div className="w-full h-2 md:h-2.5" style={{ background: 'var(--line-2)' }} />
+                <div className="w-3/4 h-2 md:h-2.5" style={{ background: 'var(--line-2)' }} />
+
+                {/* Highlighted Risk Clause */}
+                <div
+                  className="w-full h-16 md:h-20 p-3 relative overflow-hidden flex flex-col justify-center space-y-2"
+                  style={{ background: 'var(--bg-2)', borderLeft: '2px solid var(--accent)' }}
+                >
+                  <div className="w-1/4 h-1.5 md:h-2" style={{ background: 'var(--text-3)' }} />
+                  <div className="w-full h-1.5 md:h-2" style={{ background: 'var(--line-2)' }} />
+                  <div className="w-5/6 h-1.5 md:h-2" style={{ background: 'var(--line-2)' }} />
+                </div>
+
+                <div className="w-5/6 h-2 md:h-2.5" style={{ background: 'var(--line)' }} />
+                <div className="w-full h-2 md:h-2.5" style={{ background: 'var(--line)' }} />
+                <div className="w-4/6 h-2 md:h-2.5" style={{ background: 'var(--line)' }} />
               </div>
             </div>
-            
+
+            {/* Front Cover */}
+            <div
+              ref={coverRef}
+              className="absolute inset-0 origin-left [transform-style:preserve-3d] z-30 flex items-center justify-center"
+              style={{
+                background: 'var(--bg-2)',
+                border: '1px solid var(--line)',
+              }}
+            >
+              <Shield
+                className="w-10 h-10 md:w-12 md:h-12 stroke-1"
+                style={{ color: 'var(--text-3)' }}
+              />
+            </div>
+
           </div>
         </div>
 
@@ -147,3 +167,4 @@ export default function HeroScroll() {
     </div>
   );
 }
+

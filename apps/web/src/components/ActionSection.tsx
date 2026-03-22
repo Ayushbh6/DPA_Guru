@@ -82,32 +82,27 @@ export default function ActionSection() {
   });
 
   return (
-    <section className="relative z-20 w-full flex flex-col items-center justify-center text-center px-6 min-h-[70vh] pb-32">
-      {/* Ambient bloom matching the page's light sources */}
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
-        <div className="w-[100vw] h-[80vh] bg-[radial-gradient(ellipse,rgba(99,102,241,0.14),transparent_65%)]" />
-        <div className="absolute w-[60vw] h-[50vh] bg-[radial-gradient(ellipse,rgba(139,92,246,0.1),transparent_60%)] translate-y-12" />
-      </div>
-
-      {/* Vertical rule — visual breath between scroll sections and CTA */}
-      <div className="w-px h-16 bg-gradient-to-b from-transparent via-white/20 to-transparent mb-12" />
+    <section className="relative z-20 w-full flex flex-col items-center text-center px-6 pt-8 pb-20">
+      {/* Vertical divider */}
+      <div className="w-px h-6 mb-6" style={{ background: 'var(--line)' }} />
 
       <div className="relative max-w-2xl w-full">
-        <p className="mb-5 text-[10px] uppercase tracking-[0.3em] text-white/45">
+        <p
+          className="mb-5 text-[10px] uppercase tracking-[0.35em] font-medium"
+          style={{ color: 'var(--accent)' }}
+        >
           Begin
         </p>
         <h2
           className="text-4xl md:text-5xl lg:text-6xl font-semibold tracking-tight"
-          style={{
-            background: 'linear-gradient(150deg, #ffffff 0%, rgba(210,210,255,0.88) 50%, rgba(255,255,255,0.65) 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-          }}
+          style={{ color: 'var(--text)' }}
         >
           Start a new analysis.
         </h2>
-        <p className="mt-5 text-sm leading-7 text-white/55 max-w-sm mx-auto">
+        <p
+          className="mt-4 text-base leading-relaxed max-w-md mx-auto"
+          style={{ color: 'var(--text-2)' }}
+        >
           One project per DPA. Upload, parse, and generate a compliance checklist — all in one place.
         </p>
 
@@ -115,7 +110,8 @@ export default function ActionSection() {
           <button
             type="button"
             onClick={() => setCreateModalOpen(true)}
-            className="inline-flex items-center justify-center gap-2 bg-white px-8 py-3.5 text-sm font-medium text-black transition-all hover:bg-white/90"
+            className="inline-flex items-center justify-center gap-2 px-8 py-3.5 text-sm font-medium transition-opacity hover:opacity-80"
+            style={{ background: 'var(--invert)', color: 'var(--invert-fg)' }}
           >
             <Plus className="h-4 w-4" />
             <span>Create New Analysis</span>
@@ -123,7 +119,8 @@ export default function ActionSection() {
           <button
             type="button"
             onClick={() => void openModal()}
-            className="inline-flex items-center justify-center gap-2 border border-white/15 px-8 py-3.5 text-sm text-white/65 transition-colors hover:bg-white/5 hover:text-white/85"
+            className="inline-flex items-center justify-center gap-2 px-8 py-3.5 text-sm transition-opacity hover:opacity-70"
+            style={{ border: '1px solid var(--line)', color: 'var(--text-2)' }}
           >
             Open Existing Analysis
           </button>
@@ -139,7 +136,8 @@ export default function ActionSection() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+              className="fixed inset-0 z-40 backdrop-blur-sm"
+              style={{ background: 'rgba(0,0,0,0.55)' }}
               onClick={() => !creating && setCreateModalOpen(false)}
             />
             <motion.div
@@ -152,20 +150,24 @@ export default function ActionSection() {
               onClick={() => !creating && setCreateModalOpen(false)}
             >
               <div
-                className="w-full max-w-md border border-white/12 bg-[rgba(8,8,26,0.97)] p-6 text-left"
+                className="w-full max-w-md p-6 text-left"
+                style={{ background: 'var(--bg-1)', border: '1px solid var(--line)' }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-medium text-white/90">Name Your Analysis</h3>
+                  <h3 className="text-lg font-medium" style={{ color: 'var(--text)' }}>Name Your Analysis</h3>
                   <button
                     type="button"
                     onClick={() => !creating && setCreateModalOpen(false)}
-                    className="text-white/40 transition-colors hover:text-white/80"
+                    className="transition-colors"
+                    style={{ color: 'var(--text-3)' }}
+                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
                   >
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-                <p className="text-sm text-white/50 mb-5">
+                <p className="text-sm mb-5" style={{ color: 'var(--text-2)' }}>
                   Give this DPA review a title to easily find it later.
                 </p>
                 <input
@@ -178,14 +180,24 @@ export default function ActionSection() {
                     }
                   }}
                   placeholder="e.g. Acme Corp DPA Q3"
-                  className="w-full border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none focus:border-white/25 mb-6"
+                  className="w-full px-4 py-3 text-sm outline-none mb-6"
+                  style={{
+                    background: 'var(--bg-2)',
+                    border: '1px solid var(--line)',
+                    color: 'var(--text)',
+                  }}
+                  onFocus={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
+                  onBlur={e => (e.currentTarget.style.borderColor = 'var(--line)')}
                 />
                 <div className="flex justify-end gap-3">
                   <button
                     type="button"
                     onClick={() => setCreateModalOpen(false)}
                     disabled={creating}
-                    className="px-4 py-2.5 text-sm text-white/60 hover:text-white transition-colors"
+                    className="px-4 py-2.5 text-sm transition-colors"
+                    style={{ color: 'var(--text-2)' }}
+                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-2)')}
                   >
                     Cancel
                   </button>
@@ -193,7 +205,8 @@ export default function ActionSection() {
                     type="button"
                     onClick={() => void handleCreate()}
                     disabled={creating || !newProjectName.trim()}
-                    className="inline-flex items-center gap-2 bg-white px-5 py-2.5 text-sm font-medium text-black disabled:opacity-60"
+                    className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium disabled:opacity-40 transition-opacity hover:opacity-80"
+                    style={{ background: 'var(--invert)', color: 'var(--invert-fg)' }}
                   >
                     {creating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
                     Start Analysis
@@ -214,7 +227,8 @@ export default function ActionSection() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+              className="fixed inset-0 z-40 backdrop-blur-sm"
+              style={{ background: 'rgba(0,0,0,0.55)' }}
               onClick={() => setModalOpen(false)}
             />
             <motion.div
@@ -227,36 +241,52 @@ export default function ActionSection() {
               onClick={() => setModalOpen(false)}
             >
               <div
-                className="w-full max-w-lg border border-white/12 bg-[rgba(8,8,26,0.97)] text-left"
+                className="w-full max-w-lg text-left"
+                style={{ background: 'var(--bg-1)', border: '1px solid var(--line)' }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-white/45">Saved Analyses</div>
+                <div
+                  className="flex items-center justify-between px-5 py-4"
+                  style={{ borderBottom: '1px solid var(--line)' }}
+                >
+                  <div
+                    className="text-[11px] uppercase tracking-[0.22em]"
+                    style={{ color: 'var(--text-3)' }}
+                  >
+                    Saved Analyses
+                  </div>
                   <button
                     type="button"
                     onClick={() => setModalOpen(false)}
-                    className="text-white/40 transition-colors hover:text-white/80"
+                    className="transition-colors"
+                    style={{ color: 'var(--text-3)' }}
+                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
                   >
                     <X className="h-4 w-4" />
                   </button>
                 </div>
 
-                <div className="border-b border-white/10 px-5 pb-3 pt-4">
-                  <div className="flex items-center gap-3 border border-white/10 bg-black/25 px-4 py-2.5">
-                    <Search className="h-4 w-4 shrink-0 text-white/35" />
+                <div className="px-5 pb-3 pt-4" style={{ borderBottom: '1px solid var(--line)' }}>
+                  <div
+                    className="flex items-center gap-3 px-4 py-2.5"
+                    style={{ border: '1px solid var(--line)', background: 'var(--bg-2)' }}
+                  >
+                    <Search className="h-4 w-4 shrink-0" style={{ color: 'var(--text-3)' }} />
                     <input
                       ref={searchRef}
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                       placeholder="Search projects..."
-                      className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"
+                      className="flex-1 bg-transparent text-sm outline-none"
+                      style={{ color: 'var(--text)' }}
                     />
                   </div>
                 </div>
 
                 <div className="max-h-[360px] overflow-y-auto">
                   {loadingProjects ? (
-                    <div className="flex items-center gap-3 px-5 py-8 text-sm text-white/50">
+                    <div className="flex items-center gap-3 px-5 py-8 text-sm" style={{ color: 'var(--text-2)' }}>
                       <LoaderCircle className="h-4 w-4 animate-spin" />
                       <span>Loading...</span>
                     </div>
@@ -266,11 +296,14 @@ export default function ActionSection() {
                         key={project.project_id}
                         href={`/projects/${project.project_id}`}
                         onClick={() => setModalOpen(false)}
-                        className="group flex items-center justify-between gap-4 border-b border-white/8 px-5 py-4 transition-colors hover:bg-white/[0.03]"
+                        className="group flex items-center justify-between gap-4 px-5 py-4 transition-colors"
+                        style={{ borderBottom: '1px solid var(--line)' }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-2)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                       >
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-medium text-white/88">{project.name}</div>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/38">
+                          <div className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{project.name}</div>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style={{ color: 'var(--text-3)' }}>
                             <span>{statusLabel(project.status)}</span>
                             {project.document_filename && (
                               <span className="truncate">{project.document_filename}</span>
@@ -278,11 +311,14 @@ export default function ActionSection() {
                             <span>{formatRelativeDate(project.last_activity_at)}</span>
                           </div>
                         </div>
-                        <ArrowUpRight className="h-4 w-4 shrink-0 text-white/35 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-white/65" />
+                        <ArrowUpRight
+                          className="h-4 w-4 shrink-0 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+                          style={{ color: 'var(--text-3)' }}
+                        />
                       </Link>
                     ))
                   ) : (
-                    <div className="px-5 py-8 text-sm text-white/40">
+                    <div className="px-5 py-8 text-sm" style={{ color: 'var(--text-3)' }}>
                       {search ? "No matching projects." : "No saved projects yet."}
                     </div>
                   )}

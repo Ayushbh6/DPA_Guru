@@ -55,7 +55,7 @@ export default function ScrollRevealText({ children, className = "" }: ScrollRev
   }, []);
 
   return (
-    <div ref={textRef} className={`py-40 flex items-center justify-center text-center ${className}`}>
+    <div ref={textRef} className={`py-16 flex items-center justify-center text-center ${className}`}>
       <h2
         className="text-4xl md:text-6xl lg:text-7xl font-medium tracking-tight max-w-5xl px-6 leading-tight"
         style={{

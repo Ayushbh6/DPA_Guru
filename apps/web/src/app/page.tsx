@@ -26,7 +26,7 @@ export default function Home() {
 
       <HeroScroll />
 
-      <section className="w-full py-40 relative z-10">
+      <section className="w-full py-16 relative z-10">
         <ScrollRevealText>
           Understand your obligations with absolute clarity.
         </ScrollRevealText>

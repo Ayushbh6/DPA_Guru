@@ -1,7 +1,7 @@
 PYTHONPATH=apps/api/src:apps/worker/src:packages/schemas/python:packages/checklist/python:packages/eval/python
 ALEMBIC_CONFIG=apps/api/alembic.ini
 
-.PHONY: test db-upgrade db-downgrade kb-plan kb-run kb-resume kb-status kb-retry-failed
+.PHONY: test db-upgrade db-downgrade kb-plan kb-run kb-resume kb-status kb-retry-failed api-dev
 
 test:
 	PYTHONPATH="$(PYTHONPATH)" pytest -q apps/api/tests apps/worker/tests
@@ -26,3 +26,6 @@ kb-status:
 
 kb-retry-failed:
 	PYTHONPATH="$(PYTHONPATH)" python -m kb_pipeline.cli retry-failed --run-id "$${RUN_ID:?set RUN_ID}" $(if $(LLM_CONCURRENCY),--llm-concurrency "$(LLM_CONCURRENCY)",) $(if $(EMBED_CONCURRENCY),--embed-concurrency "$(EMBED_CONCURRENCY)",) $(if $(UPSERT_CONCURRENCY),--upsert-concurrency "$(UPSERT_CONCURRENCY)",)
+
+api-dev:
+	PYTHONPATH="$(PYTHONPATH)" python -m upload_api

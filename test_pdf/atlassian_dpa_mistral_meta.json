@@ -1,0 +1,10 @@
+{
+  "mistral_model": "mistral-ocr-latest",
+  "mistral_usage_info": {
+    "pages_processed": 6,
+    "doc_size_bytes": 169213
+  },
+  "page_count": 6,
+  "includes_image_base64": true,
+  "table_format": "markdown"
+}

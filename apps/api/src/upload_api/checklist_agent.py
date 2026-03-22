@@ -1,0 +1,631 @@
+from __future__ import annotations
+
+import json
+import re
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+from dpa_checklist import ChecklistDraftOutput
+from google import genai
+from google.genai import types
+
+from .config import Settings
+from .kb_retrieval import KbVectorRetriever
+
+
+ProgressCallback = Callable[[str, str], None]
+
+_WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{1,}")
+_ANCHOR_MIN_LEN = 4
+
+
+@dataclass(frozen=True)
+class SourceRecord:
+    source_id: str
+    title: str
+    authority: str
+    kind: str
+    url: str
+    text: str
+
+
+@dataclass(frozen=True)
+class DpaPageRecord:
+    page: int
+    text: str
+
+
+def _keyword_terms(text: str) -> list[str]:
+    seen: set[str] = set()
+    terms: list[str] = []
+    for match in _WORD_RE.finditer(text.lower()):
+        term = match.group(0)
+        if term in seen or len(term) < 3:
+            continue
+        seen.add(term)
+        terms.append(term)
+    return terms
+
+
+def _chunk_text(text: str, *, chunk_chars: int = 1800) -> list[str]:
+    text = text.strip()
+    if not text:
+        return []
+
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for paragraph in paragraphs:
+        para_len = len(paragraph)
+        if current and current_len + para_len + 2 > chunk_chars:
+            chunks.append("\n\n".join(current))
+            current = [paragraph]
+            current_len = para_len
+        else:
+            current.append(paragraph)
+            current_len += para_len + (2 if current else 0)
+
+    if current:
+        chunks.append("\n\n".join(current))
+
+    if not chunks:
+        return [text[:chunk_chars]]
+    return chunks
+
+
+def _score_text(query: str, text: str) -> float:
+    lowered = text.lower()
+    score = 0.0
+    for term in _keyword_terms(query):
+        score += lowered.count(term)
+    return score
+
+
+def _best_anchor_window(text: str, anchor: str, *, window: int) -> str:
+    if not text.strip():
+        return ""
+
+    anchor = anchor.strip()
+    if len(anchor) >= _ANCHOR_MIN_LEN:
+        idx = text.lower().find(anchor.lower())
+        if idx >= 0:
+            start = max(0, idx - window)
+            end = min(len(text), idx + len(anchor) + window)
+            return text[start:end].strip()
+
+    return text[:window * 2].strip()
+
+
+def _normalize_check_ids(payload: ChecklistDraftOutput) -> ChecklistDraftOutput:
+    data = payload.model_dump(mode="python")
+    for index, item in enumerate(data["checks"], start=1):
+        item["check_id"] = f"CHECK_{index:03d}"
+    return ChecklistDraftOutput.model_validate(data)
+
+
+def _gemini_response_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "version": {"type": "string"},
+            "meta": {
+                "type": "object",
+                "properties": {
+                    "selected_source_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "confidence": {"type": "number"},
+                    "open_questions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "generation_summary": {"type": "string"},
+                },
+                "required": ["selected_source_ids", "confidence", "open_questions"],
+            },
+            "checks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "check_id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "category": {"type": "string"},
+                        "legal_basis": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "required": {"type": "boolean"},
+                        "severity": {
+                            "type": "string",
+                            "enum": ["LOW", "MEDIUM", "HIGH", "MANDATORY"],
+                        },
+                        "evidence_hint": {"type": "string"},
+                        "pass_criteria": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "fail_criteria": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "sources": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "source_type": {
+                                        "type": "string",
+                                        "enum": ["LAW", "GUIDELINE", "INTERNAL_POLICY"],
+                                    },
+                                    "authority": {"type": "string"},
+                                    "source_ref": {"type": "string"},
+                                    "source_url": {"type": "string"},
+                                    "source_excerpt": {"type": "string"},
+                                    "interpretation_notes": {"type": "string"},
+                                },
+                                "required": [
+                                    "source_type",
+                                    "authority",
+                                    "source_ref",
+                                    "source_url",
+                                    "source_excerpt",
+                                ],
+                            },
+                        },
+                        "draft_rationale": {"type": "string"},
+                    },
+                    "required": [
+                        "check_id",
+                        "title",
+                        "category",
+                        "legal_basis",
+                        "required",
+                        "severity",
+                        "evidence_hint",
+                        "pass_criteria",
+                        "fail_criteria",
+                        "sources",
+                        "draft_rationale",
+                    ],
+                },
+            },
+        },
+        "required": ["version", "meta", "checks"],
+    }
+
+
+class ChecklistDraftAgent:
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._kb_retriever = KbVectorRetriever(settings)
+
+    def generate(
+        self,
+        *,
+        document_id: uuid.UUID,
+        selected_source_ids: list[str],
+        user_instruction: str | None,
+        parsed_markdown_path: Path,
+        parsed_pages_path: Path | None,
+        progress_cb: ProgressCallback | None = None,
+    ) -> ChecklistDraftOutput:
+        if not self._settings.gemini_api_key:
+            raise RuntimeError("GEMINI_API_KEY is required for checklist generation.")
+
+        if progress_cb:
+            progress_cb("RETRIEVING_KB", "Loading selected KB source files.")
+        sources = self._load_sources(selected_source_ids)
+        if not sources:
+            raise RuntimeError("No selected KB source files could be loaded.")
+
+        if progress_cb:
+            progress_cb("INSPECTING_DPA", "Loading parsed DPA pages for bounded inspection.")
+        dpa_pages = self._load_dpa_pages(parsed_markdown_path, parsed_pages_path)
+
+        toolset = _ChecklistToolset(
+            sources=sources,
+            dpa_pages=dpa_pages,
+            kb_retriever=self._kb_retriever,
+        )
+        source_catalog = [
+            {
+                "source_id": source.source_id,
+                "title": source.title,
+                "authority": source.authority,
+                "kind": source.kind,
+                "url": source.url,
+            }
+            for source in sources
+        ]
+        dpa_summary = {
+            "document_id": str(document_id),
+            "page_count": len(dpa_pages),
+            "has_page_text": any(page.text.strip() for page in dpa_pages),
+        }
+
+        contents = [
+            "Generate a source-backed DPA review checklist draft.",
+            "Selected sources:",
+            json.dumps(source_catalog, indent=2),
+            "Parsed DPA summary:",
+            json.dumps(dpa_summary, indent=2),
+            f"User instruction: {(user_instruction or '').strip() or 'None provided'}",
+        ]
+
+        if progress_cb:
+            progress_cb("DRAFTING_CHECKLIST", "Generating checklist draft with Gemini structured output.")
+
+        with genai.Client(api_key=self._settings.gemini_api_key) as client:
+            tools_list = [
+                toolset.search_selected_kb,
+                toolset.fetch_selected_source_context,
+                toolset.search_dpa,
+                toolset.fetch_dpa_pages,
+                toolset.fetch_dpa_excerpt,
+            ]
+            
+            tools_map = {
+                "search_selected_kb": toolset.search_selected_kb,
+                "fetch_selected_source_context": toolset.fetch_selected_source_context,
+                "search_dpa": toolset.search_dpa,
+                "fetch_dpa_pages": toolset.fetch_dpa_pages,
+                "fetch_dpa_excerpt": toolset.fetch_dpa_excerpt,
+            }
+
+            config = types.GenerateContentConfig(
+                system_instruction=_SYSTEM_PROMPT,
+                temperature=0,
+                response_mime_type="application/json",
+                response_schema=_gemini_response_schema(),
+                tools=tools_list,
+            )
+
+            history = [
+                types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text="\n\n".join(contents))]
+                )
+            ]
+
+            final_text = None
+            for iteration in range(15):
+                response = client.models.generate_content(
+                    model=self._settings.gemini_checklist_model,
+                    contents=history,
+                    config=config,
+                )
+                
+                history.append(response.candidates[0].content)
+                
+                if response.function_calls:
+                    if progress_cb:
+                        first_call = response.function_calls[0].name
+                        progress_cb("RUNNING_TOOLS", f"Executing tool: {first_call}")
+                    
+                    tool_response_parts = []
+                    for function_call in response.function_calls:
+                        name = function_call.name
+                        args = function_call.args
+                        
+                        if name in tools_map:
+                            try:
+                                result = tools_map[name](**args)
+                                part = types.Part.from_function_response(
+                                    name=name,
+                                    response={"result": result}
+                                )
+                            except Exception as e:
+                                part = types.Part.from_function_response(
+                                    name=name,
+                                    response={"error": str(e)}
+                                )
+                        else:
+                            part = types.Part.from_function_response(
+                                name=name,
+                                response={"error": f"Unknown tool: {name}"}
+                            )
+                        tool_response_parts.append(part)
+                    
+                    history.append(
+                        types.Content(
+                            role="user",
+                            parts=tool_response_parts
+                        )
+                    )
+                else:
+                    final_text = response.text
+                    break
+
+        if not final_text:
+            raise RuntimeError("Gemini did not return structured checklist output after tool iterations.")
+
+        if progress_cb:
+            progress_cb("VALIDATING_OUTPUT", "Validating final checklist draft output.")
+
+        payload = ChecklistDraftOutput.model_validate_json(final_text)
+
+        return _normalize_check_ids(payload)
+
+    def _load_sources(self, selected_source_ids: list[str]) -> list[SourceRecord]:
+        manifest_path = self._settings.repo_root / "kb" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        source_rows = manifest.get("sources")
+        if not isinstance(source_rows, list):
+            raise RuntimeError("KB manifest is invalid.")
+
+        selected = set(selected_source_ids)
+        records: list[SourceRecord] = []
+        for row in source_rows:
+            if not isinstance(row, dict):
+                continue
+            source_id = str(row.get("source_id") or "")
+            if source_id not in selected:
+                continue
+            md_path = row.get("md_path")
+            txt_path = row.get("txt_path")
+            local_path = md_path or txt_path
+            if not isinstance(local_path, str):
+                continue
+            path = self._settings.repo_root / local_path
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8")
+            records.append(
+                SourceRecord(
+                    source_id=source_id,
+                    title=str(row.get("title") or source_id),
+                    authority=str(row.get("authority") or ""),
+                    kind=str(row.get("kind") or ""),
+                    url=str(row.get("url") or ""),
+                    text=text,
+                )
+            )
+        return records
+
+    def _load_dpa_pages(self, parsed_markdown_path: Path, parsed_pages_path: Path | None) -> list[DpaPageRecord]:
+        if parsed_pages_path and parsed_pages_path.exists():
+            payload = json.loads(parsed_pages_path.read_text(encoding="utf-8"))
+            pages_raw = payload.get("pages")
+            if isinstance(pages_raw, list):
+                pages: list[DpaPageRecord] = []
+                for row in pages_raw:
+                    if not isinstance(row, dict):
+                        continue
+                    page_no = row.get("page_no")
+                    page_text = row.get("page_text")
+                    if isinstance(page_no, int) and isinstance(page_text, str):
+                        pages.append(DpaPageRecord(page=page_no, text=page_text))
+                if pages:
+                    return pages
+
+        text = parsed_markdown_path.read_text(encoding="utf-8")
+        matches = list(re.finditer(r"(?m)^page_no:\s*(\d+)\s*$", text))
+        pages: list[DpaPageRecord] = []
+        for index, match in enumerate(matches):
+            page = int(match.group(1))
+            start = match.end()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            block = text[start:end]
+            text_match = re.search(r"page_text:\n(?P<body>.*?)(?:\npage_images:|\Z)", block, flags=re.S)
+            body = text_match.group("body").strip() if text_match else block.strip()
+            pages.append(DpaPageRecord(page=page, text=body))
+        return pages
+
+
+class _ChecklistToolset:
+    def __init__(
+        self,
+        *,
+        sources: list[SourceRecord],
+        dpa_pages: list[DpaPageRecord],
+        kb_retriever: KbVectorRetriever,
+    ) -> None:
+        self._sources = {source.source_id: source for source in sources}
+        self._selected_source_ids = [source.source_id for source in sources]
+        self._source_chunks = {
+            source.source_id: _chunk_text(source.text)
+            for source in sources
+        }
+        self._dpa_pages = dpa_pages
+        self._kb_retriever = kb_retriever
+
+    def search_selected_kb(self, query: str, top_k: int = 6) -> str:
+        """Run hybrid retrieval over only the selected KB sources and return the best matching excerpts.
+
+        Args:
+            query: A focused legal obligation, clause concept, article, or compliance topic to search for.
+              Good examples:
+              - "processor acts only on documented controller instructions"
+              - "subprocessor authorization and objection rights"
+              - "Article 28 security and confidentiality obligations"
+              Bad examples:
+              - "checklist"
+              - "GDPR"
+              - "everything about DPAs"
+            top_k: Maximum number of ranked excerpts to return.
+
+        Usage guidance:
+        - Use this as the primary KB discovery tool before drafting checklist items.
+        - Start with a focused obligation or clause query, not a broad generic query.
+        - If a returned excerpt looks promising but incomplete, call `fetch_selected_source_context`
+          to inspect more context from that same selected source.
+        - This tool searches only the user-selected KB sources.
+        - Internally this is hybrid retrieval: vector similarity plus lexical/full-text ranking.
+        """
+        try:
+            vector_results = self._kb_retriever.search_selected_sources(
+                query=query,
+                selected_source_ids=self._selected_source_ids,
+                top_k=top_k,
+            )
+        except Exception:
+            vector_results = []
+
+        if vector_results:
+            payload = [
+                {
+                    "source_id": item.source_id,
+                    "title": item.source_title,
+                    "chunk_index": item.chunk_index,
+                    "score": item.score,
+                    "excerpt": item.excerpt,
+                    "structured_text": item.structured_text,
+                    "retrieval_mode": "vector",
+                }
+                for item in vector_results
+            ]
+            return json.dumps(payload, ensure_ascii=False)
+
+        results: list[dict[str, Any]] = []
+        for source_id, chunks in self._source_chunks.items():
+            source = self._sources[source_id]
+            for index, chunk in enumerate(chunks, start=1):
+                score = _score_text(query, chunk)
+                if score <= 0:
+                    continue
+                results.append(
+                    {
+                        "source_id": source.source_id,
+                        "title": source.title,
+                        "authority": source.authority,
+                        "chunk_index": index,
+                        "score": score,
+                        "excerpt": chunk[:900],
+                        "retrieval_mode": "lexical_fallback",
+                    }
+                )
+        results.sort(key=lambda item: item["score"], reverse=True)
+        return json.dumps(results[: max(1, min(top_k, 12))], ensure_ascii=False)
+
+    def fetch_selected_source_context(self, source_id: str, anchor: str, window: int = 1200) -> str:
+        """Fetch a larger excerpt from one selected KB source around an anchor term.
+
+        Args:
+            source_id: One of the user-selected KB source ids.
+            anchor: Text to center the excerpt around.
+            window: Approximate number of surrounding characters to include.
+
+        Usage guidance:
+        - Use this after `search_selected_kb` when you need broader legal context from a selected source.
+        - Pass a concrete anchor such as an article number, clause phrase, or excerpt fragment.
+        - Do not use this as a replacement for search; use it for verification and expansion.
+        """
+        source = self._sources.get(source_id)
+        if source is None:
+            return json.dumps({"error": f"Unknown or unselected source_id: {source_id}"})
+
+        excerpt = _best_anchor_window(source.text, anchor, window=max(300, min(window, 4000)))
+        payload = {
+            "source_id": source.source_id,
+            "title": source.title,
+            "authority": source.authority,
+            "url": source.url,
+            "excerpt": excerpt,
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    def search_dpa(self, query: str, top_k: int = 6) -> str:
+        """Search the parsed uploaded DPA pages for relevant clauses.
+
+        Args:
+            query: Document concept or clause to search for.
+            top_k: Maximum number of page matches to return.
+
+        Usage guidance:
+        - Use this only after establishing the legal obligation from the selected KB sources.
+        - Use focused clause-style queries such as "audit rights", "delete or return personal data", or
+          "breach notification without undue delay".
+        - The DPA is a refinement input, not the legal source of truth.
+        """
+        results: list[dict[str, Any]] = []
+        for page in self._dpa_pages:
+            score = _score_text(query, page.text)
+            if score <= 0:
+                continue
+            excerpt = _best_anchor_window(page.text, query, window=500)
+            results.append({"page": page.page, "score": score, "excerpt": excerpt[:900]})
+        results.sort(key=lambda item: item["score"], reverse=True)
+        return json.dumps(results[: max(1, min(top_k, 12))], ensure_ascii=False)
+
+    def fetch_dpa_pages(self, start_page: int, end_page: int) -> str:
+        """Fetch the parsed text for a contiguous DPA page range.
+
+        Args:
+            start_page: Inclusive starting page number.
+            end_page: Inclusive ending page number.
+
+        Usage guidance:
+        - Use this when `search_dpa` identifies promising pages and you need broader surrounding context.
+        - Prefer short ranges instead of large document sweeps.
+        """
+        if start_page > end_page:
+            start_page, end_page = end_page, start_page
+        selected = [
+            {"page": page.page, "text": page.text[:4000]}
+            for page in self._dpa_pages
+            if start_page <= page.page <= end_page
+        ]
+        return json.dumps(selected, ensure_ascii=False)
+
+    def fetch_dpa_excerpt(self, page: int, anchor_text: str, window: int = 900) -> str:
+        """Fetch a bounded excerpt from a single parsed DPA page around anchor text.
+
+        Args:
+            page: Parsed page number.
+            anchor_text: Text to center the excerpt around.
+            window: Approximate surrounding characters to include.
+
+        Usage guidance:
+        - Use this after `search_dpa` when you need precise local context around a clause.
+        - Prefer this over fetching many full pages when the target clause is already known.
+        """
+        page_record = next((item for item in self._dpa_pages if item.page == page), None)
+        if page_record is None:
+            return json.dumps({"error": f"Unknown page: {page}"})
+        excerpt = _best_anchor_window(page_record.text, anchor_text, window=max(250, min(window, 3000)))
+        return json.dumps({"page": page, "excerpt": excerpt}, ensure_ascii=False)
+
+
+_SYSTEM_PROMPT = """
+You generate checklist drafts for DPA review.
+
+Rules:
+- Output must strictly match the provided response schema.
+- Use only the selected KB sources as the legal basis for checklist items.
+- The uploaded DPA is only for tailoring and refinement, not for inventing legal obligations.
+- Preserve broad legal coverage implied by the selected KB sources.
+- Deduplicate overlapping obligations.
+- Treat the user's instruction as a strong preference, but do not fabricate unsupported legal basis or fake citations.
+- If a user request is not clearly supported by the selected sources, reflect that uncertainty in open_questions or draft_rationale.
+- Every checklist item must be specific, source-backed, and actionable for later review.
+- Keep titles concise and professional.
+- legal_basis should cite the relevant article/section names or source references when visible in the selected-source context.
+- evidence_hint should tell the later review agent what clause to look for in the DPA.
+- pass_criteria and fail_criteria should be concrete and auditable.
+- sources must only reference the selected KB sources.
+- Do not include commentary outside the schema.
+
+Tool usage instructions:
+- Use `search_selected_kb` as your primary discovery tool for legal obligations.
+- Query the KB in focused slices such as instructions, confidentiality, security, subprocessors, audit rights,
+  breach notice, deletion/return, transfers, and assistance obligations.
+- When a KB search hit looks relevant but incomplete, use `fetch_selected_source_context` to inspect more context
+  from that exact selected source before drafting the checklist item.
+- Use DPA tools only after you have established the legal obligation from KB sources.
+- Use `search_dpa` to see how the uploaded agreement is structured and whether specific clause families appear present,
+  fragmented, unusually worded, or obviously absent.
+- Use `fetch_dpa_pages` or `fetch_dpa_excerpt` only for bounded refinement, not for broad document sweeps.
+- Do not let DPA wording define the obligation. Let it only refine checklist phrasing, emphasis, and open questions.
+
+Recommended working pattern:
+1. Search selected KB sources for a concrete obligation.
+2. Expand context from the strongest selected source hits.
+3. Draft the source-backed checklist item.
+4. Inspect the DPA only to tailor wording, emphasis, and open questions.
+5. Repeat until the selected-source coverage is broad and deduplicated.
+""".strip()

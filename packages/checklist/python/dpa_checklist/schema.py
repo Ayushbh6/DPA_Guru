@@ -69,6 +69,23 @@ class ChecklistItem(StrictModel):
     sources: list[ChecklistSource] = Field(min_length=1)
 
 
+class ChecklistDraftMeta(StrictModel):
+    selected_source_ids: list[str] = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+    open_questions: list[str] = Field(default_factory=list)
+    generation_summary: str | None = None
+
+
+class ChecklistDraftItem(ChecklistItem):
+    draft_rationale: str = Field(min_length=1)
+
+
+class ChecklistDraftOutput(StrictModel):
+    version: str = Field(min_length=1)
+    meta: ChecklistDraftMeta
+    checks: list[ChecklistDraftItem] = Field(min_length=1)
+
+
 class ChecklistDocument(StrictModel):
     version: str = Field(min_length=1)
     governance: ChecklistGovernance

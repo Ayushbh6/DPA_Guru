@@ -42,7 +42,10 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 expected_tables = {
                     "tenants",
                     "users",
+                    "projects",
                     "documents",
+                    "document_parse_jobs",
+                    "checklist_draft_jobs",
                     "document_chunks",
                     "analysis_runs",
                     "findings",
@@ -68,6 +71,8 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                     ).scalars()
                 )
                 assert "documents_tenant_uploaded_idx" in idx_names
+                assert "projects_tenant_last_activity_idx" in idx_names
+                assert "projects_status_updated_idx" in idx_names
                 assert "analysis_runs_tenant_status_started_idx" in idx_names
                 assert "rule_hits_run_severity_idx" in idx_names
                 assert "review_actions_run_finding_created_idx" in idx_names
@@ -79,6 +84,13 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 assert "kb_ingest_runs_status_created_idx" in idx_names
                 assert "kb_ingest_tasks_run_final_idx" in idx_names
                 assert "kb_chunks_source_idx" in idx_names
+                assert "checklist_draft_jobs_tenant_created_idx" in idx_names
+                assert "checklist_draft_jobs_document_created_idx" in idx_names
+                assert "checklist_draft_jobs_status_updated_idx" in idx_names
+                assert "documents_project_uidx" in idx_names
+                assert "document_parse_jobs_project_created_idx" in idx_names
+                assert "checklist_draft_jobs_project_created_idx" in idx_names
+                assert "analysis_runs_project_started_idx" in idx_names
 
                 rls_rows = conn.execute(
                     sa.text(
@@ -87,7 +99,7 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                         FROM pg_class
                         WHERE relname IN (
                           'tenants', 'users', 'documents', 'document_chunks',
-                          'analysis_runs', 'findings', 'rule_hits',
+                          'projects', 'document_parse_jobs', 'checklist_draft_jobs', 'analysis_runs', 'findings', 'rule_hits',
                           'review_actions', 'billing_events', 'audit_events'
                         )
                         """
@@ -144,16 +156,28 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                     {"tenant_id": tenant_id, "email": "reviewer@example.com", "role": "REVIEWER"},
                 ).scalar_one()
 
+                project_id = conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO projects (tenant_id, name, status)
+                        VALUES (:tenant_id, :name, :status)
+                        RETURNING id
+                        """
+                    ),
+                    {"tenant_id": tenant_id, "name": "Untitled analysis", "status": "EMPTY"},
+                ).scalar_one()
+
                 document_id = conn.execute(
                     sa.text(
                         """
-                        INSERT INTO documents (tenant_id, filename, mime_type, page_count, storage_uri)
-                        VALUES (:tenant_id, :filename, :mime_type, :page_count, :storage_uri)
+                        INSERT INTO documents (tenant_id, project_id, filename, mime_type, page_count, storage_uri)
+                        VALUES (:tenant_id, :project_id, :filename, :mime_type, :page_count, :storage_uri)
                         RETURNING id
                         """
                     ),
                     {
                         "tenant_id": tenant_id,
+                        "project_id": project_id,
                         "filename": "sample-dpa.pdf",
                         "mime_type": "application/pdf",
                         "page_count": 12,
@@ -164,13 +188,14 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 run_id = conn.execute(
                     sa.text(
                         """
-                        INSERT INTO analysis_runs (tenant_id, document_id, status, model_version, policy_version)
-                        VALUES (:tenant_id, :document_id, :status, :model_version, :policy_version)
+                        INSERT INTO analysis_runs (tenant_id, project_id, document_id, status, model_version, policy_version)
+                        VALUES (:tenant_id, :project_id, :document_id, :status, :model_version, :policy_version)
                         RETURNING id
                         """
                     ),
                     {
                         "tenant_id": tenant_id,
+                        "project_id": project_id,
                         "document_id": document_id,
                         "status": "QUEUED",
                         "model_version": "managed-1.0",

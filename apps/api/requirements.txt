@@ -1,9 +1,17 @@
 alembic
 docker
+fastapi
+mistralai
+google-genai
+openai
 pgvector
 psycopg[binary]
 pydantic
+pymupdf
+python-multipart
 pytest
 python-dotenv
 SQLAlchemy
 testcontainers
+tiktoken
+uvicorn

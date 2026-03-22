@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from dpa_checklist.schema import ChecklistDocument, ChecklistItem, export_checklist_json_schema
+from dpa_checklist.schema import (
+    ChecklistDocument,
+    ChecklistDraftOutput,
+    ChecklistItem,
+    export_checklist_json_schema,
+)
 from dpa_eval.schema import EvalRecord, export_eval_json_schema
 from dpa_schemas.output_v2 import OutputV2Report, export_output_v2_json_schema
 
@@ -80,6 +85,41 @@ def _valid_checklist_payload() -> dict:
                 ]
             }
         ]
+    }
+
+
+def _valid_checklist_draft_payload() -> dict:
+    return {
+        "version": "draft_v1",
+        "meta": {
+            "selected_source_ids": ["gdpr_regulation_2016_679"],
+            "confidence": 0.88,
+            "open_questions": ["Should the checklist split controller and transfer obligations more explicitly?"],
+            "generation_summary": "Generated from GDPR source material and tailored for later DPA review.",
+        },
+        "checks": [
+            {
+                "check_id": "CHECK_001",
+                "title": "Processor must follow controller instructions",
+                "category": "Instructions",
+                "legal_basis": ["GDPR Article 28(3)(a)"],
+                "required": True,
+                "severity": "MANDATORY",
+                "evidence_hint": "Find a clause limiting processing to documented controller instructions.",
+                "pass_criteria": ["The DPA limits processing to documented controller instructions."],
+                "fail_criteria": ["The clause is missing or allows unrelated processing."],
+                "sources": [
+                    {
+                        "source_type": "LAW",
+                        "authority": "EUR-Lex",
+                        "source_ref": "GDPR Article 28(3)(a)",
+                        "source_url": "https://example.com/gdpr/article-28-3-a",
+                        "source_excerpt": "The processor shall process the personal data only on documented instructions from the controller.",
+                    }
+                ],
+                "draft_rationale": "This is a core Article 28 processor obligation and must be reviewed in every DPA.",
+            }
+        ],
     }
 
 
@@ -177,6 +217,13 @@ def test_checklist_document_requires_governance() -> None:
 
     with pytest.raises(ValidationError):
         ChecklistDocument.model_validate(checklist_data)
+
+
+def test_checklist_draft_output_validates() -> None:
+    parsed = ChecklistDraftOutput.model_validate(_valid_checklist_draft_payload())
+
+    assert parsed.checks[0].check_id == "CHECK_001"
+    assert parsed.meta.selected_source_ids == ["gdpr_regulation_2016_679"]
 
 
 def test_export_json_schemas() -> None:

@@ -71,9 +71,9 @@ def _chunk_text(text: str, *, chunk_chars: int = 1800) -> list[str]:
     if current:
         chunks.append("\n\n".join(current))
 
-    if not chunks:
-        return [text[:chunk_chars]]
-    return chunks
+    if chunks:
+        return chunks
+    return [text[index:index + chunk_chars] for index in range(0, len(text), chunk_chars)] or [text]
 
 
 def _score_text(query: str, text: str) -> float:
@@ -199,6 +199,78 @@ def _gemini_response_schema() -> dict[str, Any]:
     }
 
 
+def _checklist_tool_declarations() -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "function",
+            "name": "search_selected_kb",
+            "description": "Run hybrid retrieval over the selected KB sources and return the best matching excerpts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "top_k": {"type": "integer"},
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "fetch_selected_source_context",
+            "description": "Fetch a larger excerpt from one selected KB source around an anchor term.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "anchor": {"type": "string"},
+                    "window": {"type": "integer"},
+                },
+                "required": ["source_id", "anchor"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "search_dpa",
+            "description": "Search the parsed DPA text for the most relevant pages or excerpts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "top_k": {"type": "integer"},
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "fetch_dpa_pages",
+            "description": "Fetch one or more full DPA pages by page range.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start_page": {"type": "integer"},
+                    "end_page": {"type": "integer"},
+                },
+                "required": ["start_page", "end_page"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "fetch_dpa_excerpt",
+            "description": "Fetch a focused excerpt from a specific DPA page around an anchor text.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {"type": "integer"},
+                    "anchor_text": {"type": "string"},
+                    "window": {"type": "integer"},
+                },
+                "required": ["page", "anchor_text"],
+            },
+        },
+    ]
+
+
 class ChecklistDraftAgent:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -258,16 +330,10 @@ class ChecklistDraftAgent:
         ]
 
         if progress_cb:
-            progress_cb("DRAFTING_CHECKLIST", "Generating checklist draft with Gemini structured output.")
+            progress_cb("DRAFTING_CHECKLIST", "Preparing the checklist draft.")
 
         with genai.Client(api_key=self._settings.gemini_api_key) as client:
-            tools_list = [
-                toolset.search_selected_kb,
-                toolset.fetch_selected_source_context,
-                toolset.search_dpa,
-                toolset.fetch_dpa_pages,
-                toolset.fetch_dpa_excerpt,
-            ]
+            tools_list = _checklist_tool_declarations()
             
             tools_map = {
                 "search_selected_kb": toolset.search_selected_kb,
@@ -277,75 +343,83 @@ class ChecklistDraftAgent:
                 "fetch_dpa_excerpt": toolset.fetch_dpa_excerpt,
             }
 
-            config = types.GenerateContentConfig(
-                system_instruction=_SYSTEM_PROMPT,
-                temperature=0,
-                response_mime_type="application/json",
-                response_schema=_gemini_response_schema(),
-                tools=tools_list,
-            )
-
-            history = [
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text="\n\n".join(contents))]
-                )
-            ]
-
             final_text = None
+            previous_interaction_id: str | None = None
+            pending_input: Any = [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "\n\n".join(contents)}]
+                }
+            ]
             for iteration in range(15):
-                response = client.models.generate_content(
+                response = client.interactions.create(
                     model=self._settings.gemini_checklist_model,
-                    contents=history,
-                    config=config,
+                    input=pending_input,
+                    previous_interaction_id=previous_interaction_id,
+                    tools=tools_list,
+                    system_instruction=_SYSTEM_PROMPT,
+                    response_format=_gemini_response_schema(),
+                    generation_config={
+                        "temperature": 0,
+                        "thinking_level": "low",
+                        "thinking_summaries": "none"
+                    }
                 )
+                previous_interaction_id = response.id
                 
-                history.append(response.candidates[0].content)
+                function_calls = [out for out in response.outputs if out.type == "function_call"]
                 
-                if response.function_calls:
+                if function_calls:
                     if progress_cb:
-                        first_call = response.function_calls[0].name
-                        progress_cb("RUNNING_TOOLS", f"Executing tool: {first_call}")
+                        first_call = function_calls[0].name
+                        if first_call in {"search_selected_kb", "fetch_selected_source_context"}:
+                            progress_cb("DRAFTING_CHECKLIST", "Gathering supporting information from the selected references.")
+                        elif first_call in {"search_dpa", "fetch_dpa_pages", "fetch_dpa_excerpt"}:
+                            progress_cb("DRAFTING_CHECKLIST", "Reviewing the document for the most relevant sections.")
+                        else:
+                            progress_cb("DRAFTING_CHECKLIST", "Organizing the information needed for the checklist.")
                     
-                    tool_response_parts = []
-                    for function_call in response.function_calls:
+                    tool_results = []
+                    for function_call in function_calls:
                         name = function_call.name
-                        args = function_call.args
+                        args = function_call.arguments
                         
                         if name in tools_map:
                             try:
                                 result = tools_map[name](**args)
-                                part = types.Part.from_function_response(
-                                    name=name,
-                                    response={"result": result}
-                                )
+                                tool_results.append({
+                                    "type": "function_result",
+                                    "name": name,
+                                    "call_id": function_call.id,
+                                    "result": result
+                                })
                             except Exception as e:
-                                part = types.Part.from_function_response(
-                                    name=name,
-                                    response={"error": str(e)}
-                                )
+                                tool_results.append({
+                                    "type": "function_result",
+                                    "name": name,
+                                    "call_id": function_call.id,
+                                    "result": json.dumps({"error": str(e)})
+                                })
                         else:
-                            part = types.Part.from_function_response(
-                                name=name,
-                                response={"error": f"Unknown tool: {name}"}
-                            )
-                        tool_response_parts.append(part)
-                    
-                    history.append(
-                        types.Content(
-                            role="user",
-                            parts=tool_response_parts
-                        )
-                    )
+                            tool_results.append({
+                                "type": "function_result",
+                                "name": name,
+                                "call_id": function_call.id,
+                                "result": json.dumps({"error": f"Unknown tool: {name}"})
+                            })
+                    pending_input = tool_results
+                    continue
                 else:
-                    final_text = response.text
+                    text_outputs = [out for out in response.outputs if out.type == "text"]
+                    if text_outputs:
+                        final_text = "".join([out.text for out in text_outputs if out.text])
                     break
 
         if not final_text:
             raise RuntimeError("Gemini did not return structured checklist output after tool iterations.")
 
         if progress_cb:
-            progress_cb("VALIDATING_OUTPUT", "Validating final checklist draft output.")
+            progress_cb("VALIDATING_OUTPUT", "Finalizing the checklist.")
 
         payload = ChecklistDraftOutput.model_validate_json(final_text)
 
@@ -495,7 +569,7 @@ class _ChecklistToolset:
                         "authority": source.authority,
                         "chunk_index": index,
                         "score": score,
-                        "excerpt": chunk[:900],
+                        "excerpt": chunk,
                         "retrieval_mode": "lexical_fallback",
                     }
                 )
@@ -519,13 +593,13 @@ class _ChecklistToolset:
         if source is None:
             return json.dumps({"error": f"Unknown or unselected source_id: {source_id}"})
 
-        excerpt = _best_anchor_window(source.text, anchor, window=max(300, min(window, 4000)))
         payload = {
             "source_id": source.source_id,
             "title": source.title,
             "authority": source.authority,
             "url": source.url,
-            "excerpt": excerpt,
+            "anchor": anchor,
+            "text": source.text,
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -547,8 +621,7 @@ class _ChecklistToolset:
             score = _score_text(query, page.text)
             if score <= 0:
                 continue
-            excerpt = _best_anchor_window(page.text, query, window=500)
-            results.append({"page": page.page, "score": score, "excerpt": excerpt[:900]})
+            results.append({"page": page.page, "score": score, "text": page.text})
         results.sort(key=lambda item: item["score"], reverse=True)
         return json.dumps(results[: max(1, min(top_k, 12))], ensure_ascii=False)
 
@@ -566,7 +639,7 @@ class _ChecklistToolset:
         if start_page > end_page:
             start_page, end_page = end_page, start_page
         selected = [
-            {"page": page.page, "text": page.text[:4000]}
+            {"page": page.page, "text": page.text}
             for page in self._dpa_pages
             if start_page <= page.page <= end_page
         ]
@@ -587,8 +660,7 @@ class _ChecklistToolset:
         page_record = next((item for item in self._dpa_pages if item.page == page), None)
         if page_record is None:
             return json.dumps({"error": f"Unknown page: {page}"})
-        excerpt = _best_anchor_window(page_record.text, anchor_text, window=max(250, min(window, 3000)))
-        return json.dumps({"page": page, "excerpt": excerpt}, ensure_ascii=False)
+        return json.dumps({"page": page, "anchor_text": anchor_text, "text": page_record.text}, ensure_ascii=False)
 
 
 _SYSTEM_PROMPT = """

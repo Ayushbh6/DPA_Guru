@@ -90,6 +90,12 @@ export type AnalysisRunSummary = {
   status: string;
   model_version: string;
   policy_version: string;
+  stage?: string | null;
+  progress_pct: number;
+  message?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  approved_checklist_id?: string | null;
   started_at: string;
   completed_at?: string | null;
   latency_ms?: number | null;
@@ -109,6 +115,19 @@ export type ReviewSetupPayload = {
   selected_source_ids: string[];
 };
 
+export type ChecklistItem = {
+  check_id: string;
+  title: string;
+  category: string;
+  legal_basis: string[];
+  required: boolean;
+  severity: "LOW" | "MEDIUM" | "HIGH" | "MANDATORY" | string;
+  evidence_hint: string;
+  pass_criteria: string[];
+  fail_criteria: string[];
+  sources: ChecklistDraftSource[];
+};
+
 export type ChecklistDraftMeta = {
   selected_source_ids: string[];
   confidence: number;
@@ -126,17 +145,32 @@ export type ChecklistDraftSource = {
 };
 
 export type ChecklistDraftItem = {
-  check_id: string;
-  title: string;
-  category: string;
-  legal_basis: string[];
-  required: boolean;
-  severity: "LOW" | "MEDIUM" | "HIGH" | "MANDATORY" | string;
-  evidence_hint: string;
-  pass_criteria: string[];
-  fail_criteria: string[];
-  sources: ChecklistDraftSource[];
+  check_id: ChecklistItem["check_id"];
+  title: ChecklistItem["title"];
+  category: ChecklistItem["category"];
+  legal_basis: ChecklistItem["legal_basis"];
+  required: ChecklistItem["required"];
+  severity: ChecklistItem["severity"];
+  evidence_hint: ChecklistItem["evidence_hint"];
+  pass_criteria: ChecklistItem["pass_criteria"];
+  fail_criteria: ChecklistItem["fail_criteria"];
+  sources: ChecklistItem["sources"];
   draft_rationale: string;
+};
+
+export type ChecklistGovernance = {
+  owner: string;
+  approval_status: "DRAFT" | "REVIEWED" | "APPROVED" | string;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  policy_version: string;
+  change_note?: string | null;
+};
+
+export type ChecklistDocument = {
+  version: string;
+  governance: ChecklistGovernance;
+  checks: ChecklistItem[];
 };
 
 export type ChecklistDraftOutput = {
@@ -183,11 +217,130 @@ export type ReviewSetupResponse = {
   status: string;
 };
 
+export type ApprovedChecklistSummary = {
+  approved_checklist_id: string;
+  project_id: string;
+  document_id: string;
+  version: string;
+  selected_source_ids: string[];
+  owner: string;
+  approval_status: string;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  change_note?: string | null;
+  created_at: string;
+};
+
+export type ApprovedChecklistResponse = ApprovedChecklistSummary & {
+  checklist: ChecklistDocument;
+};
+
+export type ApproveChecklistPayload = {
+  version: string;
+  selected_source_ids: string[];
+  checks: ChecklistItem[];
+  change_note?: string | null;
+};
+
+export type AnalysisRunBootstrapResponse = AnalysisRunSummary & {
+  ws_url: string;
+  status_url: string;
+  finding_count: number;
+};
+
+export type AnalysisRunStatus = AnalysisRunSummary & {
+  finding_count: number;
+};
+
+export type EvidenceSpan = {
+  page: number;
+  start_offset: number;
+  end_offset: number;
+};
+
+export type EvidenceQuote = {
+  page: number;
+  quote: string;
+};
+
+export type KbCitation = {
+  source_id: string;
+  source_ref: string;
+  source_excerpt: string;
+};
+
+export type CheckAssessmentOutput = {
+  check_id: string;
+  status: "COMPLIANT" | "NON_COMPLIANT" | "PARTIAL" | "UNKNOWN" | string;
+  risk: "LOW" | "MEDIUM" | "HIGH" | string;
+  confidence: number;
+  evidence_quotes: EvidenceQuote[];
+  kb_citations: KbCitation[];
+  missing_elements: string[];
+  risk_rationale: string;
+  abstained: boolean;
+  abstain_reason?: string | null;
+};
+
+export type CheckResult = {
+  check_id: string;
+  category: string;
+  status: "COMPLIANT" | "NON_COMPLIANT" | "PARTIAL" | "UNKNOWN" | string;
+  risk: "LOW" | "MEDIUM" | "HIGH" | string;
+  confidence: number;
+  abstained: boolean;
+  abstain_reason?: string | null;
+  review_required: boolean;
+  review_state: "PENDING" | "APPROVED" | "REJECTED" | string;
+  citation_pages: number[];
+  evidence_span_offsets: EvidenceSpan[];
+  risk_rationale: string;
+};
+
+export type OverallSummary = {
+  score: number;
+  risk_level: "LOW" | "MEDIUM" | "HIGH" | string;
+  summary: string;
+};
+
+export type OutputV2Report = {
+  run_id: string;
+  model_version: string;
+  policy_version: string;
+  overall: OverallSummary;
+  checks: CheckResult[];
+  highlights: string[];
+  next_actions: string[];
+  confidence: number;
+  abstained: boolean;
+  abstain_reason?: string | null;
+  review_required: boolean;
+  review_state: "PENDING" | "APPROVED" | "REJECTED" | string;
+  citation_pages: number[];
+  evidence_span_offsets: EvidenceSpan[];
+  risk_rationale: string;
+};
+
+export type AnalysisRunReportResponse = {
+  report: OutputV2Report;
+  findings: AnalysisFindingDetail[];
+};
+
+export type AnalysisFindingDetail = {
+  check_id: string;
+  title: string;
+  category: string;
+  assessment: CheckAssessmentOutput;
+  citation_pages: number[];
+  evidence_span_offsets: EvidenceSpan[];
+};
+
 export type ProjectDetail = {
   project: ProjectSummary;
   document?: ProjectDocumentSummary | null;
   parse_job?: UploadJobStatus | null;
   checklist_draft?: ChecklistDraftStatus | null;
+  approved_checklist?: ApprovedChecklistSummary | null;
   analysis_run?: AnalysisRunSummary | null;
 };
 
@@ -200,6 +353,23 @@ export function getWsBaseUrl() {
   if (apiBase.startsWith("https://")) return apiBase.replace("https://", "wss://");
   if (apiBase.startsWith("http://")) return apiBase.replace("http://", "ws://");
   return apiBase;
+}
+
+export function getDocumentFileUrl(documentId: string, page?: number | null) {
+  const encodedId = encodeURIComponent(documentId);
+  const baseUrl = `${getApiBaseUrl()}/v1/documents/${encodedId}/file`;
+  return page && page > 0 ? `${baseUrl}#page=${page}` : baseUrl;
+}
+
+export function getDocumentProxyUrl(documentId: string) {
+  return `/api/documents/${encodeURIComponent(documentId)}`;
+}
+
+export function getProjectDocumentViewerUrl(projectId: string, page?: number | null) {
+  const params = new URLSearchParams();
+  if (page && page > 0) params.set("page", String(page));
+  const query = params.toString();
+  return `/projects/${encodeURIComponent(projectId)}/review/document${query ? `?${query}` : ""}`;
 }
 
 async function parseJson<T>(res: Response): Promise<T> {
@@ -244,6 +414,17 @@ export async function renameProject(projectId: string, name: string): Promise<Pr
   return parseJson<ProjectDetail>(res);
 }
 
+export async function deleteProject(projectId: string): Promise<void> {
+  const res = await fetch(`${getApiBaseUrl()}/v1/projects/${projectId}`, {
+    method: "DELETE",
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => ({}));
+    throw new Error(errorBody.detail || "Failed to delete project.");
+  }
+}
+
 export async function createUpload(file: File, projectId: string): Promise<UploadBootstrapResponse> {
   const form = new FormData();
   form.append("project_id", projectId);
@@ -279,6 +460,39 @@ export async function createReviewSetup(payload: ReviewSetupPayload): Promise<Re
   return parseJson<ReviewSetupResponse>(res);
 }
 
+export async function getApprovedChecklist(projectId: string): Promise<ApprovedChecklistResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/v1/projects/${projectId}/approved-checklist`, { cache: "no-store" });
+  return parseJson<ApprovedChecklistResponse>(res);
+}
+
+export async function approveChecklist(projectId: string, payload: ApproveChecklistPayload): Promise<ApprovedChecklistResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/v1/projects/${projectId}/approved-checklist`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseJson<ApprovedChecklistResponse>(res);
+}
+
+export async function createAnalysisRun(projectId: string): Promise<AnalysisRunBootstrapResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/v1/analysis-runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId }),
+  });
+  return parseJson<AnalysisRunBootstrapResponse>(res);
+}
+
+export async function getAnalysisRunStatus(runId: string): Promise<AnalysisRunStatus> {
+  const res = await fetch(`${getApiBaseUrl()}/v1/analysis-runs/${runId}`, { cache: "no-store" });
+  return parseJson<AnalysisRunStatus>(res);
+}
+
+export async function getAnalysisReport(runId: string): Promise<AnalysisRunReportResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/v1/analysis-runs/${runId}/report`, { cache: "no-store" });
+  return parseJson<AnalysisRunReportResponse>(res);
+}
+
 export async function createChecklistDraft(payload: ChecklistDraftPayload): Promise<ChecklistDraftBootstrapResponse> {
   const res = await fetch(`${getApiBaseUrl()}/v1/checklist-drafts`, {
     method: "POST",
@@ -293,10 +507,21 @@ export async function getChecklistDraftStatus(draftId: string): Promise<Checklis
   return parseJson<ChecklistDraftStatus>(res);
 }
 
+export async function cancelChecklistDraft(draftId: string): Promise<ChecklistDraftStatus> {
+  const res = await fetch(`${getApiBaseUrl()}/v1/checklist-drafts/${draftId}/cancel`, {
+    method: "POST",
+  });
+  return parseJson<ChecklistDraftStatus>(res);
+}
+
 export function uploadEventsUrl(jobId: string) {
   return `${getWsBaseUrl()}/v1/uploads/${jobId}/events`;
 }
 
 export function checklistDraftEventsUrl(draftId: string) {
   return `${getWsBaseUrl()}/v1/checklist-drafts/${draftId}/events`;
+}
+
+export function analysisRunEventsUrl(runId: string) {
+  return `${getWsBaseUrl()}/v1/analysis-runs/${runId}/events`;
 }

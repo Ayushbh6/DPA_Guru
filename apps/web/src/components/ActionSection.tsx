@@ -26,10 +26,13 @@ export default function ActionSection() {
   const router = useRouter();
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const createInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (modalOpen) {
@@ -38,11 +41,18 @@ export default function ActionSection() {
     }
   }, [modalOpen]);
 
+  useEffect(() => {
+    if (createModalOpen) {
+      const timer = setTimeout(() => createInputRef.current?.focus(), 50);
+      return () => clearTimeout(timer);
+    }
+  }, [createModalOpen]);
+
   async function handleCreate() {
-    if (creating) return;
+    if (creating || !newProjectName.trim()) return;
     setCreating(true);
     try {
-      const project = await createProject();
+      const project = await createProject(newProjectName.trim());
       startTransition(() => {
         router.push(project.workspace_url || `/projects/${project.project_id}`);
       });
@@ -72,15 +82,15 @@ export default function ActionSection() {
   });
 
   return (
-    <section className="relative z-20 w-full flex flex-col items-center text-center px-6 pb-24">
+    <section className="relative z-20 w-full flex flex-col items-center justify-center text-center px-6 min-h-[70vh] pb-32">
       {/* Ambient bloom matching the page's light sources */}
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
-        <div className="w-[90vw] h-[70vh] bg-[radial-gradient(ellipse,rgba(99,102,241,0.11),transparent_60%)]" />
-        <div className="absolute w-[50vw] h-[40vh] bg-[radial-gradient(ellipse,rgba(139,92,246,0.08),transparent_55%)] translate-y-8" />
+        <div className="w-[100vw] h-[80vh] bg-[radial-gradient(ellipse,rgba(99,102,241,0.14),transparent_65%)]" />
+        <div className="absolute w-[60vw] h-[50vh] bg-[radial-gradient(ellipse,rgba(139,92,246,0.1),transparent_60%)] translate-y-12" />
       </div>
 
       {/* Vertical rule — visual breath between scroll sections and CTA */}
-      <div className="w-px h-12 bg-gradient-to-b from-transparent via-white/15 to-transparent mb-10" />
+      <div className="w-px h-16 bg-gradient-to-b from-transparent via-white/20 to-transparent mb-12" />
 
       <div className="relative max-w-2xl w-full">
         <p className="mb-5 text-[10px] uppercase tracking-[0.3em] text-white/45">
@@ -104,21 +114,11 @@ export default function ActionSection() {
         <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:justify-center">
           <button
             type="button"
-            onClick={() => void handleCreate()}
-            disabled={creating}
-            className="inline-flex items-center justify-center gap-2 bg-white px-8 py-3.5 text-sm font-medium text-black transition-all disabled:opacity-70 hover:bg-white/90"
+            onClick={() => setCreateModalOpen(true)}
+            className="inline-flex items-center justify-center gap-2 bg-white px-8 py-3.5 text-sm font-medium text-black transition-all hover:bg-white/90"
           >
-            {creating ? (
-              <>
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-                <span>Creating...</span>
-              </>
-            ) : (
-              <>
-                <Plus className="h-4 w-4" />
-                <span>Create New Analysis</span>
-              </>
-            )}
+            <Plus className="h-4 w-4" />
+            <span>Create New Analysis</span>
           </button>
           <button
             type="button"
@@ -129,6 +129,81 @@ export default function ActionSection() {
           </button>
         </div>
       </div>
+
+      <AnimatePresence>
+        {createModalOpen && (
+          <>
+            <motion.div
+              key="create-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+              onClick={() => !creating && setCreateModalOpen(false)}
+            />
+            <motion.div
+              key="create-modal-wrapper"
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4"
+              onClick={() => !creating && setCreateModalOpen(false)}
+            >
+              <div
+                className="w-full max-w-md border border-white/12 bg-[rgba(8,8,26,0.97)] p-6 text-left"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium text-white/90">Name Your Analysis</h3>
+                  <button
+                    type="button"
+                    onClick={() => !creating && setCreateModalOpen(false)}
+                    className="text-white/40 transition-colors hover:text-white/80"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <p className="text-sm text-white/50 mb-5">
+                  Give this DPA review a title to easily find it later.
+                </p>
+                <input
+                  ref={createInputRef}
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newProjectName.trim()) {
+                      void handleCreate();
+                    }
+                  }}
+                  placeholder="e.g. Acme Corp DPA Q3"
+                  className="w-full border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none focus:border-white/25 mb-6"
+                />
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setCreateModalOpen(false)}
+                    disabled={creating}
+                    className="px-4 py-2.5 text-sm text-white/60 hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleCreate()}
+                    disabled={creating || !newProjectName.trim()}
+                    className="inline-flex items-center gap-2 bg-white px-5 py-2.5 text-sm font-medium text-black disabled:opacity-60"
+                  >
+                    {creating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                    Start Analysis
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {modalOpen && (
@@ -152,7 +227,7 @@ export default function ActionSection() {
               onClick={() => setModalOpen(false)}
             >
               <div
-                className="w-full max-w-lg border border-white/12 bg-[rgba(8,8,26,0.97)]"
+                className="w-full max-w-lg border border-white/12 bg-[rgba(8,8,26,0.97)] text-left"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">

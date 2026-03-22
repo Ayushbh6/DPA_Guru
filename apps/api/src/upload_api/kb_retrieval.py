@@ -163,7 +163,7 @@ class KbVectorRetriever:
                     source_url=str(row["source_url"]),
                     chunk_index=int(row["chunk_index"]),
                     score=float(row["hybrid_score"]),
-                    excerpt=combined_text[:900],
+                    excerpt=combined_text,
                     structured_text=str(row["structured_text"]) if row.get("structured_text") is not None else None,
                 )
             )

@@ -31,7 +31,7 @@ def upgrade() -> None:
     op.create_check_constraint(
         "projects_status_check",
         "projects",
-        "status IN ('EMPTY', 'UPLOADING', 'READY_FOR_CHECKLIST', 'CHECKLIST_IN_PROGRESS', 'CHECKLIST_READY', 'REVIEW_IN_PROGRESS', 'COMPLETED', 'FAILED')",
+        "status IN ('EMPTY', 'UPLOADING', 'READY_FOR_CHECKLIST', 'CHECKLIST_IN_PROGRESS', 'CHECKLIST_READY', 'REVIEW_IN_PROGRESS', 'COMPLETED', 'FAILED', 'DELETED')",
     )
     op.create_index("projects_tenant_last_activity_idx", "projects", ["tenant_id", "last_activity_at"])
     op.create_index("projects_status_updated_idx", "projects", ["status", "updated_at"])

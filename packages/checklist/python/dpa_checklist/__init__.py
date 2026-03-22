@@ -1,4 +1,5 @@
 from dpa_checklist.schema import (
+    ApprovalStatus,
     ChecklistDocument,
     ChecklistDraftItem,
     ChecklistDraftMeta,
@@ -9,6 +10,7 @@ from dpa_checklist.schema import (
 )
 
 __all__ = [
+    "ApprovalStatus",
     "ChecklistDocument",
     "ChecklistDraftItem",
     "ChecklistDraftMeta",

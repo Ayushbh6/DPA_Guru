@@ -5,7 +5,8 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from dpa_checklist import ChecklistDraftOutput
+from dpa_checklist import ChecklistDocument, ChecklistDraftOutput, ChecklistItem
+from dpa_schemas import CheckAssessmentOutput, EvidenceSpan, OutputV2Report
 
 
 UploadStage = Literal[
@@ -29,7 +30,9 @@ ProjectStatus = Literal[
     "REVIEW_IN_PROGRESS",
     "COMPLETED",
     "FAILED",
+    "DELETED",
 ]
+AnalysisRunStatus = Literal["QUEUED", "RUNNING", "COMPLETED", "FAILED"]
 ChecklistDraftStage = Literal[
     "QUEUED",
     "RETRIEVING_KB",
@@ -110,13 +113,33 @@ class AnalysisRunSummary(BaseModel):
     analysis_run_id: uuid.UUID
     project_id: uuid.UUID
     document_id: uuid.UUID
-    status: str
+    status: AnalysisRunStatus | str
     model_version: str
     policy_version: str
+    stage: str | None = None
+    progress_pct: int = 0
+    message: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    approved_checklist_id: uuid.UUID | None = None
     started_at: datetime
     completed_at: datetime | None = None
     latency_ms: int | None = None
     cost_usd: float | None = None
+
+
+class ApprovedChecklistSummary(BaseModel):
+    approved_checklist_id: uuid.UUID
+    project_id: uuid.UUID
+    document_id: uuid.UUID
+    version: str
+    selected_source_ids: list[str]
+    owner: str
+    approval_status: str
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    change_note: str | None = None
+    created_at: datetime
 
 
 class ProjectDetail(BaseModel):
@@ -124,6 +147,7 @@ class ProjectDetail(BaseModel):
     document: ProjectDocumentSummary | None = None
     parse_job: UploadJobSnapshot | None = None
     checklist_draft: ChecklistDraftSnapshot | None = None
+    approved_checklist: ApprovedChecklistSummary | None = None
     analysis_run: AnalysisRunSummary | None = None
 
 
@@ -186,6 +210,44 @@ class ReviewSetupResponse(BaseModel):
     project_id: uuid.UUID
     selected_source_ids: list[str]
     status: str
+
+
+class ApproveChecklistRequest(BaseModel):
+    version: str = Field(min_length=1)
+    selected_source_ids: list[str] = Field(min_length=1)
+    checks: list[ChecklistItem] = Field(min_length=1)
+    change_note: str | None = None
+
+
+class ApprovedChecklistResponse(ApprovedChecklistSummary):
+    checklist: ChecklistDocument
+
+
+class CreateAnalysisRunRequest(BaseModel):
+    project_id: uuid.UUID
+
+
+class AnalysisRunSnapshot(AnalysisRunSummary):
+    finding_count: int = 0
+
+
+class AnalysisRunBootstrapResponse(AnalysisRunSnapshot):
+    ws_url: str
+    status_url: str
+
+
+class AnalysisFindingDetail(BaseModel):
+    check_id: str
+    title: str
+    category: str
+    assessment: CheckAssessmentOutput
+    citation_pages: list[int] = Field(default_factory=list)
+    evidence_span_offsets: list[EvidenceSpan] = Field(default_factory=list)
+
+
+class AnalysisRunReportResponse(BaseModel):
+    report: OutputV2Report
+    findings: list[AnalysisFindingDetail] = Field(default_factory=list)
 
 
 class RenameProjectRequest(BaseModel):

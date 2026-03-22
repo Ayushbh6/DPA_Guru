@@ -38,3 +38,9 @@ class EvidenceSpan(StrictModel):
         if self.end_offset < self.start_offset:
             raise ValueError("end_offset must be greater than or equal to start_offset")
         return self
+
+
+class OverallSummary(StrictModel):
+    score: float = Field(ge=0.0, le=100.0)
+    risk_level: RiskLevel
+    summary: str = Field(min_length=1)

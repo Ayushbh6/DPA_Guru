@@ -5,13 +5,7 @@ from pathlib import Path
 
 from pydantic import Field, model_validator
 
-from dpa_schemas.common import EvidenceSpan, FindingStatus, ReviewState, RiskLevel, StrictModel
-
-
-class OverallSummary(StrictModel):
-    score: float = Field(ge=0.0, le=100.0)
-    risk_level: RiskLevel
-    summary: str = Field(min_length=1)
+from dpa_schemas.common import EvidenceSpan, FindingStatus, OverallSummary, ReviewState, RiskLevel, StrictModel
 
 
 class CheckResult(StrictModel):

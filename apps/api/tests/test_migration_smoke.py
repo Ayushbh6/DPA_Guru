@@ -46,8 +46,10 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                     "documents",
                     "document_parse_jobs",
                     "checklist_draft_jobs",
+                    "approved_checklists",
                     "document_chunks",
                     "analysis_runs",
+                    "analysis_reports",
                     "findings",
                     "rule_hits",
                     "review_actions",
@@ -91,6 +93,8 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 assert "document_parse_jobs_project_created_idx" in idx_names
                 assert "checklist_draft_jobs_project_created_idx" in idx_names
                 assert "analysis_runs_project_started_idx" in idx_names
+                assert "approved_checklists_project_created_idx" in idx_names
+                assert "analysis_runs_status_started_idx" in idx_names
 
                 rls_rows = conn.execute(
                     sa.text(
@@ -166,6 +170,34 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                     ),
                     {"tenant_id": tenant_id, "name": "Untitled analysis", "status": "EMPTY"},
                 ).scalar_one()
+
+                conn.execute(
+                    sa.text(
+                        """
+                        UPDATE projects
+                        SET status = :status
+                        WHERE id = :project_id
+                        """
+                    ),
+                    {"status": "DELETED", "project_id": project_id},
+                )
+
+                deleted_status = conn.execute(
+                    sa.text("SELECT status FROM projects WHERE id = :project_id"),
+                    {"project_id": project_id},
+                ).scalar_one()
+                assert deleted_status == "DELETED"
+
+                conn.execute(
+                    sa.text(
+                        """
+                        UPDATE projects
+                        SET status = :status
+                        WHERE id = :project_id
+                        """
+                    ),
+                    {"status": "EMPTY", "project_id": project_id},
+                )
 
                 document_id = conn.execute(
                     sa.text(

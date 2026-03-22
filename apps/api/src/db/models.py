@@ -129,6 +129,26 @@ class ChecklistDraftJob(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ApprovedChecklist(Base):
+    __tablename__ = "approved_checklists"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
+    version: Mapped[str] = mapped_column(String(128), nullable=False)
+    selected_source_ids: Mapped[list[str]] = mapped_column(JSONB(astext_type=Text()), nullable=False)
+    checklist_json: Mapped[dict] = mapped_column(JSONB(astext_type=Text()), nullable=False)
+    owner: Mapped[str] = mapped_column(String(255), nullable=False)
+    approval_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    change_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
     __table_args__ = (UniqueConstraint("document_id", "provenance_id", name="document_chunks_document_provenance_uidx"),)
@@ -158,6 +178,14 @@ class AnalysisRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     model_version: Mapped[str] = mapped_column(String(128), nullable=False)
     policy_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    progress_pct: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_checklist_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("approved_checklists.id"), nullable=True
+    )
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
 
@@ -180,6 +208,20 @@ class Finding(Base):
     risk_rationale: Mapped[str] = mapped_column(Text, nullable=False)
     review_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     review_state: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'PENDING'"))
+    assessment_json: Mapped[dict | None] = mapped_column(JSONB(astext_type=Text()), nullable=True)
+
+
+class AnalysisReport(Base):
+    __tablename__ = "analysis_reports"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("analysis_runs.id"), primary_key=True, nullable=False
+    )
+    report_json: Mapped[dict] = mapped_column(JSONB(astext_type=Text()), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()"), server_onupdate=text("now()")
+    )
 
 
 class RuleHit(Base):

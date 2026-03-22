@@ -12,6 +12,7 @@ if src_path not in __path__:
     __path__.append(src_path)
 
 from .schema import (  # noqa: E402,F401
+    ApprovalStatus,
     ChecklistDocument,
     ChecklistDraftItem,
     ChecklistDraftMeta,
@@ -22,6 +23,7 @@ from .schema import (  # noqa: E402,F401
 )
 
 __all__ = [
+    "ApprovalStatus",
     "ChecklistDocument",
     "ChecklistDraftItem",
     "ChecklistDraftMeta",

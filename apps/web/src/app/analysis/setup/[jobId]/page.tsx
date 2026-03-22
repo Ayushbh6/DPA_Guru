@@ -28,12 +28,12 @@ import {
 } from "@/lib/uploadApi";
 
 const CHECKLIST_STAGE_LABELS: Record<string, string> = {
-  QUEUED: "Queued",
-  RETRIEVING_KB: "Retrieving Selected Sources",
-  EXPANDING_SOURCE_CONTEXT: "Expanding Source Context",
-  INSPECTING_DPA: "Inspecting Parsed DPA",
-  DRAFTING_CHECKLIST: "Drafting Checklist",
-  VALIDATING_OUTPUT: "Validating Structured Output",
+  QUEUED: "Starting Checklist",
+  RETRIEVING_KB: "Preparing References",
+  EXPANDING_SOURCE_CONTEXT: "Gathering Supporting Information",
+  INSPECTING_DPA: "Reviewing Your Document",
+  DRAFTING_CHECKLIST: "Drafting Your Checklist",
+  VALIDATING_OUTPUT: "Finalizing Checklist",
   COMPLETED: "Completed",
   FAILED: "Failed",
 };
@@ -44,7 +44,7 @@ function formatNumber(value: number | null | undefined) {
 }
 
 function formatChecklistStage(stage: string | undefined) {
-  if (!stage) return "Generating";
+  if (!stage) return "Starting Checklist";
   return CHECKLIST_STAGE_LABELS[stage] || stage.replaceAll("_", " ");
 }
 
@@ -57,6 +57,10 @@ function groupChecksByCategory(checks: ChecklistDraftItem[]) {
     groups.set(category, existing);
   }
   return Array.from(groups.entries());
+}
+
+function hasSocketError(payload: unknown): payload is { error?: string } {
+  return !!payload && typeof payload === "object" && "error" in payload;
 }
 
 export default function AnalysisSetupPage() {
@@ -144,18 +148,19 @@ export default function AnalysisSetupPage() {
     ws.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as ChecklistDraftStatus | { error?: string };
-        if ("error" in payload && payload.error) {
+        if (hasSocketError(payload) && payload.error) {
           setError(payload.error);
           setGenerating(false);
           return;
         }
-        setDraftJob(payload);
-        if (payload.status === "COMPLETED") {
+        const snapshot = payload as ChecklistDraftStatus;
+        setDraftJob(snapshot);
+        if (snapshot.status === "COMPLETED") {
           setGenerating(false);
           closeSocket();
-        } else if (payload.status === "FAILED") {
+        } else if (snapshot.status === "FAILED") {
           setGenerating(false);
-          setError(payload.error_message || "Checklist generation failed.");
+          setError(snapshot.error_message || "Checklist generation failed.");
           closeSocket();
         }
       } catch {
@@ -394,7 +399,7 @@ export default function AnalysisSetupPage() {
                         )}
                         <h2 className="text-xl text-white/90">{formatChecklistStage(draftJob.stage)}</h2>
                       </div>
-                      <p className="mt-3 text-sm text-white/45 max-w-3xl">{draftJob.message || "Generating source-backed checklist draft."}</p>
+                      <p className="mt-3 text-sm text-white/45 max-w-3xl">{draftJob.message || "Preparing your checklist."}</p>
                     </div>
                     <div className="border border-white/10 bg-white/[0.02] px-4 py-3 text-sm min-w-[220px]">
                       <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Draft Job</div>

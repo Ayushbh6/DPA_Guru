@@ -21,8 +21,11 @@ class Settings:
     openai_embedding_model: str
     gemini_api_key: str | None
     gemini_checklist_model: str
+    gemini_review_model: str
     mistral_api_key: str | None
     mistral_ocr_model: str
+    dpa_chunk_size: int
+    dpa_chunk_overlap: int
     default_dev_tenant_id: uuid.UUID
     repo_root: Path
 
@@ -50,8 +53,11 @@ def load_settings() -> Settings:
         openai_embedding_model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
         gemini_api_key=os.getenv("GEMINI_API_KEY"),
         gemini_checklist_model=os.getenv("GEMINI_CHECKLIST_MODEL", "gemini-3-flash-preview"),
+        gemini_review_model=os.getenv("GEMINI_REVIEW_MODEL", "gemini-3-flash-preview"),
         mistral_api_key=os.getenv("MISTRAL_API_KEY"),
         mistral_ocr_model=os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-latest"),
+        dpa_chunk_size=int(os.getenv("DPA_CHUNK_SIZE", "800")),
+        dpa_chunk_overlap=int(os.getenv("DPA_CHUNK_OVERLAP", "300")),
         default_dev_tenant_id=uuid.UUID(os.getenv("DEFAULT_DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001")),
         repo_root=repo_root,
     )

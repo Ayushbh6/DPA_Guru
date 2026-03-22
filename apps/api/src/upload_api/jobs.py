@@ -121,6 +121,11 @@ class DocumentFileResult:
     mime_type: str | None
 
 
+@dataclass(frozen=True)
+class DocumentParsedTextResult:
+    text: str
+
+
 class UploadPipelineService:
     def __init__(
         self,
@@ -637,6 +642,23 @@ class UploadPipelineService:
                 filename=document.filename,
                 mime_type=mime_type,
             )
+
+    def get_document_parsed_text(self, document_id: uuid.UUID) -> DocumentParsedTextResult:
+        with self.session_factory() as session:
+            document = session.get(Document, document_id)
+            if document is None:
+                raise HTTPException(status_code=404, detail="Document not found.")
+            if not document.extracted_text_uri:
+                raise HTTPException(status_code=404, detail="Parsed text is unavailable for this document.")
+
+            parsed_path = Path(document.extracted_text_uri).resolve()
+            parsed_root = self.storage.parsed_dir.resolve()
+            if not parsed_path.is_relative_to(parsed_root):
+                raise HTTPException(status_code=404, detail="Parsed text is unavailable.")
+            if not parsed_path.exists() or not parsed_path.is_file():
+                raise HTTPException(status_code=404, detail="Parsed text file is missing.")
+
+            return DocumentParsedTextResult(text=parsed_path.read_text(encoding="utf-8"))
 
     async def _schedule_job(self, job_id: uuid.UUID) -> None:
         async with self._tasks_lock:

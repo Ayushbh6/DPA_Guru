@@ -83,6 +83,10 @@ export type ProjectDocumentSummary = {
   uploaded_at: string;
 };
 
+export type ParsedDocumentTextResponse = {
+  text: string;
+};
+
 export type AnalysisRunSummary = {
   analysis_run_id: string;
   project_id: string;
@@ -403,6 +407,11 @@ export async function listProjects(): Promise<ProjectSummary[]> {
 export async function getProject(projectId: string): Promise<ProjectDetail> {
   const res = await fetch(`${getApiBaseUrl()}/v1/projects/${projectId}`, { cache: "no-store" });
   return parseJson<ProjectDetail>(res);
+}
+
+export async function getDocumentParsedText(documentId: string): Promise<ParsedDocumentTextResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/v1/documents/${documentId}/parsed-text`, { cache: "no-store" });
+  return parseJson<ParsedDocumentTextResponse>(res);
 }
 
 export async function renameProject(projectId: string, name: string): Promise<ProjectDetail> {

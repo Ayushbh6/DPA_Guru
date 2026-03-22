@@ -82,6 +82,11 @@ def create_app() -> FastAPI:
             content_disposition_type="inline",
         )
 
+    @app.get("/v1/documents/{document_id}/parsed-text")
+    async def get_document_parsed_text(document_id: uuid.UUID):
+        parsed = await asyncio.to_thread(service.get_document_parsed_text, document_id)
+        return {"text": parsed.text}
+
     @app.patch("/v1/projects/{project_id}")
     async def rename_project(project_id: uuid.UUID, payload: RenameProjectRequest):
         detail = await asyncio.to_thread(service.rename_project, project_id, payload.name)

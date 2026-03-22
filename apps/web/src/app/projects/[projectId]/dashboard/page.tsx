@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { Upload, X, LoaderCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Upload, X, LoaderCircle, ChevronDown } from "lucide-react";
 import { motion } from "framer-motion";
-import { createUpload } from "@/lib/uploadApi";
+import { createUpload, getDocumentParsedText } from "@/lib/uploadApi";
 import { useProject } from "../ProjectProvider";
 
 const MAX_UPLOAD_MB = 50;
@@ -12,7 +12,7 @@ const PARSE_STAGE_LABELS: Record<string, string> = {
   UPLOADING: "Uploading",
   VALIDATING: "Validating file",
   CLASSIFYING_PDF: "Classifying PDF",
-  PARSING_MISTRAL_OCR: "Parsing with Mistral OCR",
+  PARSING_MISTRAL_OCR: "Extracting text",
   COUNTING_TOKENS: "Estimating tokens",
   PERSISTING_RESULTS: "Saving artifacts",
   READY_FOR_REFERENCE_SELECTION: "Ready for checklist generation",
@@ -46,10 +46,54 @@ export default function DashboardPage() {
   } = useProject();
 
   const [isDragging, setIsDragging] = useState(false);
+  const [parsedText, setParsedText] = useState("");
+  const [loadingParsedText, setLoadingParsedText] = useState(false);
+  const [parsedTextError, setParsedTextError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const document = detail?.document;
   const parseJob = detail?.parse_job;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadParsedText() {
+      if (!document?.document_id || document.parse_status !== "COMPLETED") {
+        if (!cancelled) {
+          setParsedText("");
+          setParsedTextError(null);
+          setLoadingParsedText(false);
+        }
+        return;
+      }
+
+      setLoadingParsedText(true);
+      setParsedTextError(null);
+      try {
+        const response = await getDocumentParsedText(document.document_id);
+        if (!cancelled) {
+          setParsedText(response.text);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setParsedText("");
+          setParsedTextError(error instanceof Error ? error.message : "Failed to load parsed structure.");
+        }
+      } finally {
+        if (!cancelled) setLoadingParsedText(false);
+      }
+    }
+
+    void loadParsedText();
+    return () => {
+      cancelled = true;
+    };
+  }, [document?.document_id, document?.parse_status]);
+
+  const approximateCharacters = useMemo(() => {
+    if (!parsedText) return null;
+    return parsedText.replace(/\s+/g, " ").trim().length;
+  }, [parsedText]);
 
   function validateFile(file: File) {
     const ext = file.name.split(".").pop()?.toLowerCase();
@@ -174,10 +218,6 @@ export default function DashboardPage() {
                     The parsed DPA and every derived workflow artifact now belong to this project workspace.
                   </p>
                 </div>
-                <div className="px-4 py-3 text-sm min-w-[220px]" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Document</div>
-                  <div className="mt-1 break-all" style={{ color: 'var(--text-2)' }}>{document.document_id}</div>
-                </div>
               </div>
 
               <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -190,36 +230,69 @@ export default function DashboardPage() {
                   <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{formatNumber(document.page_count)}</div>
                 </div>
                 <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Parser Route</div>
-                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{document.parser_route || "Pending"}</div>
-                </div>
-                <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
                   <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Token Estimate</div>
                   <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{formatNumber(document.token_count_estimate)}</div>
                 </div>
+                <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Approx. Characters</div>
+                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>
+                    {loadingParsedText ? "Loading..." : formatNumber(approximateCharacters)}
+                  </div>
+                </div>
               </div>
+
+              <details
+                className="mt-5 overflow-hidden border"
+                style={{ borderColor: 'var(--line)', background: 'var(--bg)' }}
+              >
+                <summary
+                  className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm"
+                  style={{ color: 'var(--text)', background: 'var(--bg)' }}
+                >
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Parse Structure</div>
+                    <div className="mt-1 text-sm" style={{ color: 'var(--text-2)' }}>
+                      Expand to inspect the parsed markdown text used for downstream analysis.
+                    </div>
+                  </div>
+                  <ChevronDown className="h-4 w-4 shrink-0" style={{ color: 'var(--text-3)' }} />
+                </summary>
+                <div style={{ borderTop: '1px solid var(--line)', background: 'var(--bg-2)' }}>
+                  {loadingParsedText ? (
+                    <div className="flex items-center gap-3 px-4 py-4 text-sm" style={{ color: 'var(--text-2)' }}>
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                      Loading parsed structure...
+                    </div>
+                  ) : parsedTextError ? (
+                    <div className="px-4 py-4 text-sm" style={{ color: '#fca5a5' }}>
+                      {parsedTextError}
+                    </div>
+                  ) : (
+                    <pre
+                      className="max-h-[420px] overflow-auto px-4 py-4 text-xs leading-6 whitespace-pre-wrap"
+                      style={{ color: 'var(--text-2)' }}
+                    >
+                      {parsedText || "No parsed markdown is available for this document yet."}
+                    </pre>
+                  )}
+                </div>
+              </details>
             </div>
           </section>
 
           {parseJob && parseJob.status !== "COMPLETED" && (
             <section className="border p-5 md:p-7" style={{ background: 'var(--bg-1)', borderColor: 'var(--line)' }}>
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Document Processing</div>
-                  <div className="mt-2 flex items-center gap-3">
-                    {parseJob.status === "FAILED" ? (
-                      <X className="h-5 w-5 text-red-500" />
-                    ) : (
-                      <LoaderCircle className="h-5 w-5 animate-spin" style={{ color: 'var(--text-2)' }} />
-                    )}
-                    <h2 className="text-xl" style={{ color: 'var(--text)' }}>{formatParseStage(parseJob.stage)}</h2>
-                  </div>
-                  <p className="mt-3 max-w-3xl text-sm" style={{ color: 'var(--text-3)' }}>{parseJob.message || "Processing the uploaded DPA."}</p>
+              <div>
+                <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Document Processing</div>
+                <div className="mt-2 flex items-center gap-3">
+                  {parseJob.status === "FAILED" ? (
+                    <X className="h-5 w-5 text-red-500" />
+                  ) : (
+                    <LoaderCircle className="h-5 w-5 animate-spin" style={{ color: 'var(--text-2)' }} />
+                  )}
+                  <h2 className="text-xl" style={{ color: 'var(--text)' }}>{formatParseStage(parseJob.stage)}</h2>
                 </div>
-                <div className="px-4 py-3 text-sm min-w-[220px]" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                  <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Upload Job</div>
-                  <div className="mt-1 break-all" style={{ color: 'var(--text-2)' }}>{parseJob.job_id}</div>
-                </div>
+                <p className="mt-3 max-w-3xl text-sm" style={{ color: 'var(--text-3)' }}>{parseJob.message || "Processing the uploaded DPA."}</p>
               </div>
 
               <div className="mt-6 p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>

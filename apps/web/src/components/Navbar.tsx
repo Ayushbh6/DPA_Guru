@@ -6,12 +6,15 @@ import { Shield, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 
 function ThemeToggle() {
-  const [dark, setDark] = useState(true);
+  const [dark, setDark] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const stored = localStorage.getItem("theme");
+    return stored ? stored === "dark" : true;
+  });
 
   useEffect(() => {
-    const stored = localStorage.getItem("theme");
-    setDark(stored ? stored === "dark" : true);
-  }, []);
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  }, [dark]);
 
   function toggle() {
     const next = !dark;

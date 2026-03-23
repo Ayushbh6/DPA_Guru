@@ -44,6 +44,11 @@ def create_app() -> FastAPI:
             "http://localhost:3001",
             "http://127.0.0.1:3001",
         ],
+        allow_origin_regex=(
+            r"^https?://"
+            r"(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})"
+            r":(3000|3001)$"
+        ),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],

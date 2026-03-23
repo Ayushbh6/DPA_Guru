@@ -145,7 +145,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="grid gap-4 md:gap-6">
       {uploadError && document && (
         <div className="border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-500">
           {uploadError}
@@ -153,10 +153,10 @@ export default function DashboardPage() {
       )}
 
       {!document && (
-        <section className="p-8 md:p-12" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
+        <section className="p-5 sm:p-6 md:p-12" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
           <div className="max-w-3xl">
             <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'var(--text-3)' }}>Empty Project</div>
-            <h2 className="mt-4 text-4xl font-semibold tracking-tight md:text-5xl" style={{ color: 'var(--text)' }}>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight md:text-5xl" style={{ color: 'var(--text)' }}>
               Upload the DPA that this analysis session will own.
             </h2>
             <p className="mt-4 max-w-2xl text-base leading-7" style={{ color: 'var(--text-3)' }}>
@@ -177,7 +177,7 @@ export default function DashboardPage() {
           />
 
           <div
-            className="mt-8 border border-dashed px-6 py-14 transition-all cursor-pointer"
+            className="mt-8 cursor-pointer border border-dashed px-4 py-10 transition-all md:px-6 md:py-14"
             style={{
               borderColor: isDragging ? 'var(--accent)' : 'var(--line-2)',
               background: isDragging ? 'color-mix(in srgb, var(--accent) 5%, transparent)' : 'var(--bg-2)',
@@ -213,21 +213,21 @@ export default function DashboardPage() {
 
       {document && (
         <>
-          <section className="border overflow-hidden" style={{ background: 'var(--bg-1)', borderColor: 'var(--line)' }}>
+          <section className="overflow-hidden border" style={{ background: 'var(--bg-1)', borderColor: 'var(--line)' }}>
             <div className="h-px" style={{ background: 'var(--line-2)' }} />
-            <div className="p-5 md:p-7">
+            <div className="p-4 md:p-7">
               <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div>
                   <div className="text-xs uppercase tracking-[0.2em]" style={{ color: 'var(--text-3)' }}>Project Document</div>
-                  <h2 className="mt-2 text-2xl font-semibold tracking-tight md:text-4xl" style={{ color: 'var(--text)' }}>{document.filename}</h2>
+                  <h2 className="mt-2 break-words text-xl font-semibold tracking-tight md:text-4xl" style={{ color: 'var(--text)' }}>{document.filename}</h2>
                   <p className="mt-3 max-w-3xl" style={{ color: 'var(--text-3)' }}>
                     The parsed DPA and every derived workflow artifact now belong to this project workspace.
                   </p>
                 </div>
               </div>
 
-              <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+              <div className="mt-6 grid grid-cols-2 gap-3 xl:grid-cols-4">
+                <div className="p-3 md:p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
                   <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>
                     <FileText className="h-3.5 w-3.5" />
                     Parse Status
@@ -238,26 +238,26 @@ export default function DashboardPage() {
                     </span>
                   </div>
                 </div>
-                <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                <div className="p-3 md:p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
                   <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>
                     <BookOpen className="h-3.5 w-3.5" />
                     Pages
                   </div>
-                  <div className="mt-2 text-lg font-semibold" style={{ color: 'var(--text)' }}>{formatNumber(document.page_count)}</div>
+                  <div className="mt-2 text-base font-semibold md:text-lg" style={{ color: 'var(--text)' }}>{formatNumber(document.page_count)}</div>
                 </div>
-                <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                <div className="p-3 md:p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
                   <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>
                     <Hash className="h-3.5 w-3.5" />
                     Token Estimate
                   </div>
-                  <div className="mt-2 text-lg font-semibold" style={{ color: 'var(--text)' }}>{formatNumber(document.token_count_estimate)}</div>
+                  <div className="mt-2 text-base font-semibold md:text-lg" style={{ color: 'var(--text)' }}>{formatNumber(document.token_count_estimate)}</div>
                 </div>
-                <div className="p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                <div className="p-3 md:p-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
                   <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>
                     <Type className="h-3.5 w-3.5" />
                     Approx. Characters
                   </div>
-                  <div className="mt-2 text-lg font-semibold" style={{ color: 'var(--text)' }}>
+                  <div className="mt-2 text-base font-semibold md:text-lg" style={{ color: 'var(--text)' }}>
                     {loadingParsedText ? "Loading..." : formatNumber(approximateCharacters)}
                   </div>
                 </div>
@@ -271,7 +271,7 @@ export default function DashboardPage() {
                   className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm"
                   style={{ color: 'var(--text)', background: 'var(--bg)' }}
                 >
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Parse Structure</div>
                     <div className="mt-1 text-sm" style={{ color: 'var(--text-2)' }}>
                       Expand to inspect the parsed markdown text used for downstream analysis.
@@ -291,7 +291,7 @@ export default function DashboardPage() {
                     </div>
                   ) : (
                     <pre
-                      className="max-h-[420px] overflow-auto px-4 py-4 text-xs leading-6 whitespace-pre-wrap"
+                      className="max-h-[50svh] overflow-auto overscroll-contain px-4 py-4 text-xs leading-6 whitespace-pre-wrap md:max-h-[420px]"
                       style={{ color: 'var(--text-2)' }}
                     >
                       {parsedText || "No parsed markdown is available for this document yet."}
@@ -303,7 +303,7 @@ export default function DashboardPage() {
           </section>
 
           {parseJob && parseJob.status !== "COMPLETED" && (
-            <section className="border p-5 md:p-7" style={{ background: 'var(--bg-1)', borderColor: 'var(--line)' }}>
+            <section className="border p-4 md:p-7" style={{ background: 'var(--bg-1)', borderColor: 'var(--line)' }}>
               <div>
                 <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Document Processing</div>
                 <div className="mt-2 flex items-center gap-3">

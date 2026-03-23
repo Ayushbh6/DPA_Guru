@@ -20,11 +20,14 @@ import {
 } from "lucide-react";
 
 function ThemeToggle() {
-  const [dark, setDark] = useState(true);
-  useEffect(() => {
+  const [dark, setDark] = useState(() => {
+    if (typeof window === "undefined") return true;
     const stored = localStorage.getItem("theme");
-    setDark(stored ? stored === "dark" : true);
-  }, []);
+    return stored ? stored === "dark" : true;
+  });
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  }, [dark]);
   function toggle() {
     const next = !dark;
     setDark(next);
@@ -218,12 +221,13 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
   const [inlineRenameValue, setInlineRenameValue] = useState("");
 
   const currentProject = detail?.project;
+  const currentProjectName = detail?.project?.name || "";
 
   useEffect(() => {
-    if (!renameMode && currentProject) {
-      setRenameValue(currentProject.name);
+    if (!renameMode) {
+      setRenameValue(currentProjectName);
     }
-  }, [currentProject?.name, renameMode]);
+  }, [currentProjectName, renameMode]);
 
   // Auto-collapse sidebar on mobile
   useEffect(() => {
@@ -239,6 +243,13 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      setSidebarOpen(false);
+      setMobileOverlay(false);
+    }
+  }, [pathname]);
 
   function toggleSidebar() {
     const nextOpen = !sidebarOpen;
@@ -312,14 +323,14 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
   }
 
   const tabs = [
-    { name: "Dashboard", href: `/projects/${projectId}/dashboard` },
-    { name: "Setup Checklist", href: `/projects/${projectId}/checklist` },
-    { name: "Checklist Result", href: `/projects/${projectId}/checklist/result` },
-    { name: "Final Review", href: `/projects/${projectId}/review` },
+    { name: "Dashboard", shortName: "Dashboard", href: `/projects/${projectId}/dashboard` },
+    { name: "Setup Checklist", shortName: "Checklist", href: `/projects/${projectId}/checklist` },
+    { name: "Checklist Result", shortName: "Result", href: `/projects/${projectId}/checklist/result` },
+    { name: "Final Review", shortName: "Review", href: `/projects/${projectId}/review` },
   ];
 
   return (
-    <main className="flex h-screen overflow-hidden" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
+    <main className="min-h-svh md:flex md:h-svh md:flex-row md:overflow-hidden" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
       {/* Mobile overlay backdrop */}
       {mobileOverlay && (
         <div
@@ -331,12 +342,14 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
 
       {/* Sidebar */}
       <aside
-        className={`fixed md:relative z-40 flex shrink-0 flex-col transition-all duration-300 h-full ${
-          sidebarOpen ? "w-[300px] translate-x-0" : "w-[72px] max-md:-translate-x-full max-md:w-0 md:translate-x-0"
+        className={`fixed inset-y-0 left-0 z-40 flex flex-col transition-all duration-300 md:relative md:inset-auto md:shrink-0 ${
+          sidebarOpen
+            ? "translate-x-0 w-[min(84vw,320px)] md:w-[300px]"
+            : "-translate-x-full w-[min(84vw,320px)] md:w-[72px] md:translate-x-0"
         }`}
         style={{ background: 'var(--bg-1)', borderRight: '1px solid var(--line)' }}
       >
-        <div className="flex h-16 items-center justify-between px-4" style={{ borderBottom: '1px solid var(--line)' }}>
+        <div className="flex h-14 items-center justify-between px-4 md:h-16" style={{ borderBottom: '1px solid var(--line)' }}>
           <div
             className={`flex items-center gap-3 overflow-hidden transition-opacity duration-300 ${
               sidebarOpen ? "opacity-100" : "w-0 opacity-0"
@@ -367,7 +380,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <div className={`flex-1 overflow-y-auto px-3 py-5 ${sidebarOpen ? "" : "px-2"}`}>
+        <div className={`flex-1 overflow-y-auto px-3 py-5 pb-8 ${sidebarOpen ? "" : "px-2"}`}>
           <button
             type="button"
             onClick={() => void handleNewProject()}
@@ -445,19 +458,21 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main Content Area */}
-      <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+      <section className="relative min-w-0 md:flex md:flex-1 md:flex-col">
         {/* Mobile sidebar toggle button */}
         <button
           type="button"
           onClick={toggleSidebar}
-          className="fixed left-3 top-3 z-20 flex h-10 w-10 items-center justify-center md:hidden"
+          className={`fixed left-4 top-4 z-20 flex h-10 w-10 items-center justify-center md:hidden ${
+            sidebarOpen ? "pointer-events-none opacity-0" : ""
+          }`}
           style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', color: 'var(--text-2)' }}
         >
           <PanelLeftOpen className="h-4 w-4" />
         </button>
 
-        <div className="mx-auto flex h-full w-full max-w-7xl flex-1 flex-col overflow-hidden px-4 py-4 md:px-8 md:py-8">
-          <div className="mb-5 shrink-0">
+        <div className="mx-auto w-full max-w-7xl px-4 pb-6 pt-14 md:flex md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto md:px-8 md:py-8">
+          <div className="mb-4 hidden shrink-0 md:mb-5 md:block">
             <Link
               href="/"
               className="inline-flex items-center gap-2 text-sm transition-colors"
@@ -470,19 +485,19 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
             </Link>
           </div>
 
-          <header className="shrink-0 px-5 py-5 md:px-6" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <header className="shrink-0 px-3 py-3 md:px-6 md:py-5" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
                 <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'var(--text-3)' }}>Analysis Session</div>
                 {!renameMode ? (
                   <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <h1 className="truncate text-3xl font-semibold tracking-tight md:text-4xl" style={{ color: 'var(--text)' }}>
+                    <h1 className="truncate text-xl font-semibold tracking-tight md:text-4xl" style={{ color: 'var(--text)' }}>
                       {currentProject?.name}
                     </h1>
                     <button
                       type="button"
                       onClick={() => setRenameMode(true)}
-                      className="inline-flex items-center gap-2 text-sm transition-colors"
+                      className="inline-flex items-center gap-2 text-xs transition-colors md:text-sm"
                       style={{ color: 'var(--text-3)' }}
                       onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-2)')}
                       onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
@@ -535,13 +550,13 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                     </div>
                   </div>
                 )}
-                <p className="mt-4 max-w-3xl text-sm leading-6 md:text-base" style={{ color: 'var(--text-3)' }}>
+                <p className="mt-4 hidden max-w-3xl text-sm leading-6 md:block md:text-base" style={{ color: 'var(--text-3)' }}>
                   One project owns the uploaded DPA, parsing job, checklist draft, and the later final review.
                 </p>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="px-4 py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+              <div className="grid gap-2 sm:grid-cols-2 md:gap-3">
+                <div className="px-3 py-3 md:px-4 md:py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
                   <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Project Status</div>
                   <div className="mt-2">
                     <span className="inline-flex items-center border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]" style={projectStatusStyle(currentProject?.status || 'EMPTY')}>
@@ -549,7 +564,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                     </span>
                   </div>
                 </div>
-                <div className="px-4 py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                <div className="px-3 py-3 md:px-4 md:py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
                   <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Last Activity</div>
                   <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>
                     {currentProject?.last_activity_at ? formatRelativeDate(currentProject.last_activity_at) : "Just now"}
@@ -559,14 +574,15 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
 
             {/* Tabs */}
-            <div className="mt-6 -mx-5 -mb-5 flex overflow-x-auto px-5 md:-mx-6 md:px-6" style={{ borderTop: '1px solid var(--line)' }}>
+            <div className="mt-5 -mx-4 -mb-4 flex overflow-x-auto px-4 md:-mx-6 md:-mb-5 md:px-6" style={{ borderTop: '1px solid var(--line)' }}>
               {tabs.map((tab, tabIdx) => {
                 const isActive = pathname.startsWith(tab.href);
                 return (
                   <Link
                     key={tab.name}
                     href={tab.href}
-                    className="flex items-center gap-2 whitespace-nowrap border-b-[3px] px-4 py-4 text-sm font-medium transition-colors"
+                    aria-label={tab.name}
+                    className="flex items-center gap-2 whitespace-nowrap border-b-[3px] px-3 py-3 text-xs font-medium transition-colors md:px-4 md:py-4 md:text-sm"
                     style={{
                       borderBottomColor: isActive ? 'var(--accent)' : 'transparent',
                       color: isActive ? 'var(--text)' : 'var(--text-3)',
@@ -575,7 +591,8 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                     onMouseLeave={e => { if (!isActive) { e.currentTarget.style.color = 'var(--text-3)'; e.currentTarget.style.borderBottomColor = 'transparent'; } }}
                   >
                     <span className="inline-flex h-5 w-5 items-center justify-center text-[10px] font-bold" style={{ background: isActive ? 'var(--accent)' : 'var(--bg-2)', color: isActive ? 'var(--invert-fg)' : 'var(--text-3)' }}>{tabIdx + 1}</span>
-                    {tab.name}
+                    <span className="md:hidden">{tab.shortName}</span>
+                    <span className="hidden md:inline">{tab.name}</span>
                   </Link>
                 );
               })}
@@ -583,12 +600,12 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
           </header>
 
           {workspaceError && (
-            <div className="mt-5 shrink-0 border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-500">
+            <div className="mt-4 shrink-0 border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-500 md:mt-5">
               {workspaceError}
             </div>
           )}
 
-          <div className="mt-6 min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
+          <div className="mt-4 md:mt-6 md:min-h-0 md:flex-1 md:overflow-y-auto md:pr-1">{children}</div>
         </div>
       </section>
     </main>

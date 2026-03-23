@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, CheckCircle2, Download, ExternalLink, LoaderCircle, Plus, ShieldAlert, Trash2, X } from "lucide-react";
+import { Check, CheckCircle2, Download, ExternalLink, LoaderCircle, Plus, Trash2, X } from "lucide-react";
 import {
   approveChecklist,
   getApprovedChecklist,
@@ -88,7 +88,7 @@ function createManualCheck(checks: EditableChecklistRow[]): EditableChecklistRow
     pass_criteria: [],
     fail_criteria: [],
     sources: [manualPlaceholderSource()],
-    _decision: "accepted",
+    _decision: "rejected",
     _origin: "manual",
   };
 }
@@ -180,6 +180,7 @@ export default function ChecklistResultPage() {
   const [loadingApproved, setLoadingApproved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [expandedCheckIds, setExpandedCheckIds] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -225,6 +226,12 @@ export default function ChecklistResultPage() {
   const groupedChecks = useMemo(() => groupChecksByCategory(checks), [checks]);
   const acceptedCount = useMemo(() => checks.filter((check) => check._decision === "accepted").length, [checks]);
 
+  function toggleExpanded(checkId: string) {
+    setExpandedCheckIds((prev) =>
+      prev.includes(checkId) ? prev.filter((id) => id !== checkId) : [...prev, checkId],
+    );
+  }
+
   function updateCheck(index: number, patch: Partial<EditableChecklistRow>) {
     setChecks((prev) => prev.map((check, current) => (current === index ? { ...check, ...patch } : check)));
   }
@@ -234,7 +241,11 @@ export default function ChecklistResultPage() {
   }
 
   function addManualRow() {
-    setChecks((prev) => [createManualCheck(prev), ...prev]);
+    setChecks((prev) => {
+      const manualCheck = createManualCheck(prev);
+      setExpandedCheckIds((current) => [...current, manualCheck.check_id]);
+      return [manualCheck, ...prev];
+    });
   }
 
   function removeRow(index: number) {
@@ -302,11 +313,11 @@ export default function ChecklistResultPage() {
     <div className="grid gap-6">
       <section className="overflow-hidden border" style={{ background: 'var(--bg-1)', borderColor: 'var(--line)' }}>
         <div className="h-px" style={{ background: 'var(--accent)', opacity: 0.4 }} />
-        <div className="p-5 md:p-7">
+        <div className="p-4 md:p-7">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
               <div className="text-xs uppercase tracking-[0.2em]" style={{ color: 'var(--text-3)' }}>Checklist Approval</div>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight" style={{ color: 'var(--text)' }}>
+              <h2 className="mt-2 text-xl font-semibold tracking-tight md:text-2xl" style={{ color: 'var(--text)' }}>
                 {approvedSummary ? "Approved Checklist Loaded" : "Review, Keep, Reject, Or Add Checks"}
               </h2>
               <p className="mt-3 max-w-3xl" style={{ color: 'var(--text-3)' }}>
@@ -324,7 +335,7 @@ export default function ChecklistResultPage() {
             )}
           </div>
 
-          <div className="mt-6 grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]">
+          <div className="mt-6 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] md:gap-4">
             <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
               <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Version</div>
               <input
@@ -397,7 +408,7 @@ export default function ChecklistResultPage() {
             </div>
           </div>
 
-          <div className="mt-8 grid gap-8">
+          <div className="mt-8 grid gap-6 md:gap-8">
             {groupedChecks.map(([category, grouped]) => (
               <div key={category}>
                 <div className="flex items-center gap-3">
@@ -410,6 +421,7 @@ export default function ChecklistResultPage() {
                     const current = checks[index];
                     const isManual = current?._origin === "manual";
                     const isRejected = current?._decision === "rejected";
+                    const isExpanded = expandedCheckIds.includes(current.check_id);
 
                     return (
                       <div key={check.check_id} className="border overflow-hidden" style={checklistCardTone(current)}>
@@ -427,7 +439,7 @@ export default function ChecklistResultPage() {
                             <input
                               value={current.title}
                               onChange={(event) => updateCheck(index, { title: event.target.value })}
-                              className="mt-2 w-full border px-3 py-2 text-lg outline-none"
+                              className="mt-2 w-full border px-3 py-2 text-base outline-none md:text-lg"
                               style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
                               placeholder="Checklist title"
                             />
@@ -475,10 +487,19 @@ export default function ChecklistResultPage() {
                                 </button>
                               )}
                             </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleExpanded(current.check_id)}
+                              className="inline-flex items-center justify-center border px-3 py-2 text-xs font-medium uppercase tracking-[0.14em] transition-colors md:hidden"
+                              style={{ borderColor: 'var(--line)', color: 'var(--text-2)' }}
+                            >
+                              {isExpanded ? "Hide Details" : "Edit Details"}
+                            </button>
                           </div>
                         </div>
 
-                        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                        <div className={`${isExpanded ? "mt-4" : "mt-0 hidden"} md:mt-4 md:block`}>
+                        <div className="grid gap-4 lg:grid-cols-2">
                           <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
                             <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Category</div>
                             <input
@@ -496,7 +517,7 @@ export default function ChecklistResultPage() {
                               rows={4}
                               className="mt-3 w-full border px-3 py-2 text-sm outline-none"
                               style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
-                            />
+                              />
                           </div>
                         </div>
 
@@ -567,6 +588,7 @@ export default function ChecklistResultPage() {
                               );
                             })}
                           </div>
+                        </div>
                         </div>
                         </div>{/* end flex-1 content */}
                       </div>{/* end flex row */}

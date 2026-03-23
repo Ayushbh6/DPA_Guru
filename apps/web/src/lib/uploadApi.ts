@@ -349,7 +349,14 @@ export type ProjectDetail = {
 };
 
 export function getApiBaseUrl() {
-  return process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const configuredBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (configuredBaseUrl) return configuredBaseUrl;
+
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:8001`;
+  }
+
+  return "http://127.0.0.1:8001";
 }
 
 export function getWsBaseUrl() {

@@ -4,6 +4,7 @@ import hashlib
 import re
 import uuid
 from dataclasses import dataclass
+from typing import Protocol
 
 import psycopg
 import tiktoken
@@ -19,6 +20,10 @@ from .config import Settings
 
 
 _WS_RE = re.compile(r"\s+")
+
+
+class _Tokenizer(Protocol):
+    def encode(self, text: str) -> list[int]: ...
 
 
 @dataclass(frozen=True)
@@ -302,7 +307,7 @@ def _overlap_units(units: list[_PageParagraph], overlap: int) -> tuple[list[_Pag
     return selected, token_total
 
 
-def _paragraph_units(enc: tiktoken.Encoding, pages: list[DpaPageRecord]) -> list[_PageParagraph]:
+def _paragraph_units(enc: _Tokenizer, pages: list[DpaPageRecord]) -> list[_PageParagraph]:
     units: list[_PageParagraph] = []
     for page in pages:
         paragraphs = [part.strip() for part in re.split(r"\n\s*\n", page.text) if part.strip()]
@@ -316,11 +321,20 @@ def _paragraph_units(enc: tiktoken.Encoding, pages: list[DpaPageRecord]) -> list
     return units
 
 
-def _tokenizer() -> tiktoken.Encoding:
+def _tokenizer() -> _Tokenizer:
     try:
         return tiktoken.get_encoding("cl100k_base")
-    except KeyError:
-        return tiktoken.encoding_for_model("gpt-4o-mini")
+    except Exception:
+        try:
+            return tiktoken.encoding_for_model("gpt-4o-mini")
+        except Exception:
+            return _WhitespaceTokenizer()
+
+
+class _WhitespaceTokenizer:
+    def encode(self, text: str) -> list[int]:
+        words = [part for part in re.split(r"\s+", text.strip()) if part]
+        return list(range(len(words)))
 
 
 def _match_quote_to_page(page_text: str, quote: str, page: int) -> EvidenceSpan | None:

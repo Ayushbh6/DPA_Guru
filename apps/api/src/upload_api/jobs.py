@@ -11,15 +11,17 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from db.models import (
     AnalysisReport,
     AnalysisRun,
+    AuditEvent,
     ApprovedChecklist,
     ChecklistDraftJob,
     Document,
+    DocumentArtifact,
     DocumentChunk,
     DocumentParseJob,
     Finding,
@@ -60,7 +62,7 @@ from .schemas import (
     UploadBootstrapResponse,
     UploadJobSnapshot,
 )
-from .storage import LocalStorage
+from .storage import ArtifactStore, StoredArtifact
 from dpa_schemas import CheckAssessmentOutput, CheckResult, OutputV2Report, ReviewState, ReviewSynthesisOutput, RiskLevel
 
 
@@ -112,11 +114,19 @@ class UploadCreateResult:
     job_id: uuid.UUID
     document_id: uuid.UUID
     project_id: uuid.UUID
+    tenant_id: uuid.UUID
+
+
+@dataclass(frozen=True)
+class UploadContext:
+    tenant_id: uuid.UUID
+    project_id: uuid.UUID
+    document_id: uuid.UUID
 
 
 @dataclass(frozen=True)
 class DocumentFileResult:
-    path: Path
+    content: bytes
     filename: str
     mime_type: str | None
 
@@ -132,7 +142,7 @@ class UploadPipelineService:
         *,
         settings: Settings,
         session_factory: sessionmaker[Session],
-        storage: LocalStorage,
+        storage: ArtifactStore,
         event_bus: JobEventBus,
     ) -> None:
         self.settings = settings
@@ -301,17 +311,24 @@ class UploadPipelineService:
         mime_type = (mime_type or mimetypes.guess_type(filename)[0] or "").strip() or "application/octet-stream"
         file_type = ALLOWED_EXTENSIONS[ext]
         job_id = uuid.uuid4()
-
-        upload_path = self.storage.save_upload(job_id=job_id, filename=filename, data=data)
+        context = await asyncio.to_thread(self._prepare_upload_context, project_id)
+        upload_artifact = self.storage.save_upload(
+            tenant_id=context.tenant_id,
+            project_id=context.project_id,
+            document_id=context.document_id,
+            filename=filename,
+            data=data,
+            content_type=mime_type,
+        )
 
         created = await asyncio.to_thread(
             self._create_document_and_job,
-            project_id,
+            context,
             job_id,
             filename,
             mime_type,
             file_type,
-            upload_path,
+            upload_artifact,
         )
         await self._schedule_job(created.job_id)
 
@@ -324,15 +341,7 @@ class UploadPipelineService:
             status_url=f"/v1/uploads/{created.job_id}",
         )
 
-    def _create_document_and_job(
-        self,
-        project_id: uuid.UUID,
-        job_id: uuid.UUID,
-        filename: str,
-        mime_type: str,
-        file_type: str,
-        upload_path: Path,
-    ) -> UploadCreateResult:
+    def _prepare_upload_context(self, project_id: uuid.UUID) -> UploadContext:
         with self.session_factory() as session:
             tenant = self._ensure_dev_tenant(session)
             project = session.execute(
@@ -345,13 +354,42 @@ class UploadPipelineService:
             ).scalar_one_or_none()
             if existing_document is not None:
                 raise HTTPException(status_code=409, detail="This project already has a document.")
+            return UploadContext(
+                tenant_id=tenant.id,
+                project_id=project.id,
+                document_id=uuid.uuid4(),
+            )
+
+    def _create_document_and_job(
+        self,
+        context: UploadContext,
+        job_id: uuid.UUID,
+        filename: str,
+        mime_type: str,
+        file_type: str,
+        upload_artifact: StoredArtifact,
+    ) -> UploadCreateResult:
+        source_artifact_type = "SOURCE_PDF" if file_type == "pdf" else "SOURCE_DOCX"
+        with self.session_factory() as session:
+            tenant = self._ensure_dev_tenant(session)
+            project = session.execute(
+                select(Project).where(Project.id == context.project_id, Project.tenant_id == tenant.id)
+            ).scalar_one_or_none()
+            if project is None:
+                raise HTTPException(status_code=404, detail="Project not found.")
+            existing_document = session.execute(
+                select(Document.id).where(Document.project_id == project.id)
+            ).scalar_one_or_none()
+            if existing_document is not None:
+                raise HTTPException(status_code=409, detail="This project already has a document.")
             document = Document(
+                id=context.document_id,
                 tenant_id=tenant.id,
                 project_id=project.id,
                 filename=filename,
                 mime_type=mime_type,
                 page_count=0,
-                storage_uri=str(upload_path),
+                storage_uri=upload_artifact.object_uri,
                 parse_status="QUEUED",
             )
             session.add(document)
@@ -367,12 +405,39 @@ class UploadPipelineService:
                 progress_pct=STAGE_PROGRESS["UPLOADING"],
                 message="Upload received. Queuing background processing.",
                 file_type=file_type,
-                meta_json={"original_filename": filename, "upload_path": str(upload_path)},
+                meta_json={"original_filename": filename},
             )
             session.add(job)
+            session.flush()
+            source_artifact = self._replace_active_artifact(
+                session,
+                tenant_id=tenant.id,
+                project_id=project.id,
+                document_id=document.id,
+                artifact_type=source_artifact_type,
+                artifact=upload_artifact,
+                created_by_job_id=job.id,
+                metadata_json={"filename": filename},
+            )
+            self._record_audit_event(
+                session,
+                tenant_id=tenant.id,
+                event_name="document_uploaded",
+                resource_type="document",
+                resource_id=str(document.id),
+                trace_id=str(job.id),
+            )
+            self._record_audit_event(
+                session,
+                tenant_id=tenant.id,
+                event_name="document_artifact_stored",
+                resource_type="document_artifact",
+                resource_id=str(source_artifact.id),
+                trace_id=str(job.id),
+            )
             self._sync_project_state(session, project.id)
             session.commit()
-            return UploadCreateResult(job_id=job.id, document_id=document.id, project_id=project.id)
+            return UploadCreateResult(job_id=job.id, document_id=document.id, project_id=project.id, tenant_id=tenant.id)
 
     def _ensure_dev_tenant(self, session: Session) -> Tenant:
         tenant = session.get(Tenant, self.settings.default_dev_tenant_id)
@@ -387,6 +452,71 @@ class UploadPipelineService:
         session.add(tenant)
         session.flush()
         return tenant
+
+    def _replace_active_artifact(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        project_id: uuid.UUID,
+        document_id: uuid.UUID,
+        artifact_type: str,
+        artifact: StoredArtifact,
+        created_by_job_id: uuid.UUID | None,
+        metadata_json: dict[str, Any] | None,
+    ) -> DocumentArtifact:
+        session.execute(
+            update(DocumentArtifact)
+            .where(
+                DocumentArtifact.document_id == document_id,
+                DocumentArtifact.artifact_type == artifact_type,
+                DocumentArtifact.active.is_(True),
+            )
+            .values(active=False)
+        )
+        record = DocumentArtifact(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            document_id=document_id,
+            artifact_type=artifact_type,
+            storage_provider=artifact.storage_provider,
+            bucket=artifact.bucket,
+            object_key=artifact.object_key,
+            object_uri=artifact.object_uri,
+            content_type=artifact.content_type,
+            byte_size=artifact.byte_size,
+            sha256=artifact.sha256,
+            created_by_job_id=created_by_job_id,
+            active=True,
+            metadata_json=metadata_json,
+        )
+        session.add(record)
+        session.flush()
+        return record
+
+    def _record_audit_event(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        event_name: str,
+        resource_type: str,
+        resource_id: str,
+        trace_id: str,
+        actor_type: str = "SYSTEM",
+        actor_id: str = "upload-pipeline",
+    ) -> None:
+        session.add(
+            AuditEvent(
+                tenant_id=tenant_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                event_name=event_name,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                trace_id=trace_id,
+            )
+        )
 
     def _project_name_from_filename(self, filename: str) -> str:
         return f"Project for {filename}"
@@ -628,17 +758,9 @@ class UploadPipelineService:
             document = session.get(Document, document_id)
             if document is None:
                 raise HTTPException(status_code=404, detail="Document not found.")
-
-            storage_path = Path(document.storage_uri).resolve()
-            upload_root = self.storage.upload_dir.resolve()
-            if not storage_path.is_relative_to(upload_root):
-                raise HTTPException(status_code=404, detail="Document file is unavailable.")
-            if not storage_path.exists() or not storage_path.is_file():
-                raise HTTPException(status_code=404, detail="Document file is missing.")
-
             mime_type = document.mime_type or mimetypes.guess_type(document.filename)[0]
             return DocumentFileResult(
-                path=storage_path,
+                content=self.storage.read_bytes(document.storage_uri),
                 filename=document.filename,
                 mime_type=mime_type,
             )
@@ -650,15 +772,7 @@ class UploadPipelineService:
                 raise HTTPException(status_code=404, detail="Document not found.")
             if not document.extracted_text_uri:
                 raise HTTPException(status_code=404, detail="Parsed text is unavailable for this document.")
-
-            parsed_path = Path(document.extracted_text_uri).resolve()
-            parsed_root = self.storage.parsed_dir.resolve()
-            if not parsed_path.is_relative_to(parsed_root):
-                raise HTTPException(status_code=404, detail="Parsed text is unavailable.")
-            if not parsed_path.exists() or not parsed_path.is_file():
-                raise HTTPException(status_code=404, detail="Parsed text file is missing.")
-
-            return DocumentParsedTextResult(text=parsed_path.read_text(encoding="utf-8"))
+            return DocumentParsedTextResult(text=self.storage.read_text(document.extracted_text_uri))
 
     async def _schedule_job(self, job_id: uuid.UUID) -> None:
         async with self._tasks_lock:
@@ -717,7 +831,6 @@ class UploadPipelineService:
             job_record = await asyncio.to_thread(self._get_job_record, job_id)
             if job_record is None:
                 return
-            file_path = Path(job_record["document_storage_uri"])
             filename = job_record["filename"]
             mime_type = job_record["mime_type"]
             file_type = job_record["file_type"]
@@ -730,59 +843,64 @@ class UploadPipelineService:
             page_count = job_record["page_count"] or 0
             parser_meta: dict[str, Any] = {}
             parsed_pages: list[dict[str, Any]] = []
-
-            if file_type == "pdf":
-                await self._transition_job(job_id, stage="CLASSIFYING_PDF", message="Checking whether PDF is native or scanned.")
-                inspection = await asyncio.to_thread(inspect_pdf, file_path)
-                pdf_classification = inspection.classification
-                page_count = inspection.page_count
-                await self._update_job_details(
-                    job_id,
-                    pdf_classification=pdf_classification,
-                    parser_route="mistral_ocr",
-                    meta_merge={
-                        "pdf_inspection": {
-                            "sampled_pages": inspection.sampled_pages,
-                            "text_chars_per_page": inspection.text_chars_per_page,
-                            "image_only_like_pages": inspection.image_only_like_pages,
-                            "median_text_chars": inspection.median_text_chars,
-                        }
-                    },
-                )
-                await self._transition_job(
-                    job_id,
-                    stage="PARSING_MISTRAL_OCR",
-                    message=f"Parsing {pdf_classification} PDF with Mistral OCR ({self.settings.mistral_ocr_model}).",
-                )
-                parsed = await self._parse_via_mistral_ocr(job_id, file_path, mime_type)
-                parsed_text = parsed.text
-                parsed_format = parsed.text_format
-                parser_route = parsed.parser_route
-                page_count = parsed.page_count or page_count
-                parsed_pages = parsed.pages
-                parser_meta = parsed.meta
-            elif file_type == "docx":
-                await self._transition_job(
-                    job_id,
-                    stage="PARSING_MISTRAL_OCR",
-                    message=f"Parsing DOCX with Mistral OCR ({self.settings.mistral_ocr_model}).",
-                )
-                parsed = await self._parse_via_mistral_ocr(job_id, file_path, mime_type)
-                parsed_text = parsed.text
-                parsed_format = parsed.text_format
-                parser_route = parsed.parser_route
-                page_count = parsed.page_count
-                parsed_pages = parsed.pages
-                parser_meta = parsed.meta
-            else:
-                raise RuntimeError(f"Unsupported file_type '{file_type}'")
+            suffix = Path(filename).suffix or ".bin"
+            with self.storage.local_path_for_processing(job_record["document_storage_uri"], suffix=suffix) as file_path:
+                if file_type == "pdf":
+                    await self._transition_job(job_id, stage="CLASSIFYING_PDF", message="Checking whether PDF is native or scanned.")
+                    inspection = await asyncio.to_thread(inspect_pdf, file_path)
+                    pdf_classification = inspection.classification
+                    page_count = inspection.page_count
+                    await self._update_job_details(
+                        job_id,
+                        pdf_classification=pdf_classification,
+                        parser_route="mistral_ocr",
+                        meta_merge={
+                            "pdf_inspection": {
+                                "sampled_pages": inspection.sampled_pages,
+                                "text_chars_per_page": inspection.text_chars_per_page,
+                                "image_only_like_pages": inspection.image_only_like_pages,
+                                "median_text_chars": inspection.median_text_chars,
+                            }
+                        },
+                    )
+                    await self._transition_job(
+                        job_id,
+                        stage="PARSING_MISTRAL_OCR",
+                        message=f"Parsing {pdf_classification} PDF with Mistral OCR ({self.settings.mistral_ocr_model}).",
+                    )
+                    parsed = await self._parse_via_mistral_ocr(job_id, file_path, mime_type)
+                    parsed_text = parsed.text
+                    parsed_format = parsed.text_format
+                    parser_route = parsed.parser_route
+                    page_count = parsed.page_count or page_count
+                    parsed_pages = parsed.pages
+                    parser_meta = parsed.meta
+                elif file_type == "docx":
+                    await self._transition_job(
+                        job_id,
+                        stage="PARSING_MISTRAL_OCR",
+                        message=f"Parsing DOCX with Mistral OCR ({self.settings.mistral_ocr_model}).",
+                    )
+                    parsed = await self._parse_via_mistral_ocr(job_id, file_path, mime_type)
+                    parsed_text = parsed.text
+                    parsed_format = parsed.text_format
+                    parser_route = parsed.parser_route
+                    page_count = parsed.page_count
+                    parsed_pages = parsed.pages
+                    parser_meta = parsed.meta
+                else:
+                    raise RuntimeError(f"Unsupported file_type '{file_type}'")
 
             await self._transition_job(job_id, stage="COUNTING_TOKENS", message="Estimating token count.")
             token_count = await asyncio.to_thread(estimate_token_count, parsed_text, self.settings.tokenizer_encoding)
 
             await self._transition_job(job_id, stage="PERSISTING_RESULTS", message="Saving parsed document artifacts.")
-            parsed_path = self.storage.save_parsed_markdown(document_id=job_record["document_id"], text=parsed_text)
-            parsed_pages_path = self.storage.save_parsed_pages(document_id=job_record["document_id"], pages=parsed_pages)
+            parsed_artifact = self.storage.save_parsed_markdown(
+                tenant_id=job_record["tenant_id"],
+                project_id=job_record["project_id"],
+                document_id=job_record["document_id"],
+                text=parsed_text,
+            )
 
             await self._transition_job(job_id, stage="INDEXING_DOCUMENT", message="Indexing document chunks for final review.")
             indexed_chunks = await asyncio.to_thread(
@@ -804,8 +922,7 @@ class UploadPipelineService:
                 token_count,
                 page_count,
                 parsed_format,
-                parsed_path,
-                parsed_pages_path,
+                parsed_artifact,
                 parser_meta,
             )
 
@@ -838,6 +955,7 @@ class UploadPipelineService:
             mime_type=mime_type,
             api_key=self.settings.mistral_api_key,
             model=self.settings.mistral_ocr_model,
+            include_image_base64=self.settings.mistral_include_image_base64,
             progress_cb=progress_cb,
         )
 
@@ -861,6 +979,7 @@ class UploadPipelineService:
             job, doc = row
             return {
                 "job_id": job.id,
+                "tenant_id": doc.tenant_id,
                 "document_id": doc.id,
                 "project_id": doc.project_id,
                 "file_type": job.file_type,
@@ -988,8 +1107,7 @@ class UploadPipelineService:
         token_count_estimate: int,
         page_count: int,
         parsed_format: str,
-        parsed_path: Path,
-        parsed_pages_path: Path,
+        parsed_artifact: StoredArtifact,
         parser_meta: dict[str, Any],
     ) -> None:
         with self.session_factory() as session:
@@ -1006,19 +1124,49 @@ class UploadPipelineService:
             job.token_count_estimate = token_count_estimate
             meta = dict(job.meta_json or {})
             meta["parser_meta"] = parser_meta
-            meta["parsed_pages_uri"] = str(parsed_pages_path)
             job.meta_json = meta
             job.updated_at = utcnow()
 
+            parsed_artifact_row = self._replace_active_artifact(
+                session,
+                tenant_id=doc.tenant_id,
+                project_id=doc.project_id,
+                document_id=doc.id,
+                artifact_type="PARSED_MARKDOWN",
+                artifact=parsed_artifact,
+                created_by_job_id=job.id,
+                metadata_json={
+                    "parser_route": parser_route,
+                    "page_count": page_count,
+                    "pdf_classification": pdf_classification,
+                    "token_count_estimate": token_count_estimate,
+                },
+            )
             doc.page_count = page_count
             doc.parser_route = parser_route
             doc.pdf_classification = pdf_classification
             doc.token_count_estimate = token_count_estimate
-            doc.extracted_text_uri = str(parsed_path)
+            doc.extracted_text_uri = parsed_artifact.object_uri
             doc.extracted_text_format = parsed_format
             doc.parse_completed_at = utcnow()
             doc.parse_status = "COMPLETED"
 
+            self._record_audit_event(
+                session,
+                tenant_id=doc.tenant_id,
+                event_name="document_parsed",
+                resource_type="document",
+                resource_id=str(doc.id),
+                trace_id=str(job.id),
+            )
+            self._record_audit_event(
+                session,
+                tenant_id=doc.tenant_id,
+                event_name="document_artifact_stored",
+                resource_type="document_artifact",
+                resource_id=str(parsed_artifact_row.id),
+                trace_id=str(job.id),
+            )
             self._sync_project_state(session, job.project_id)
             session.commit()
 
@@ -1178,13 +1326,9 @@ class UploadPipelineService:
                 fut.result()
 
             result = await asyncio.to_thread(
-                self.checklist_agent.generate,
-                document_id=record["document_id"],
-                selected_source_ids=record["selected_source_ids"],
-                user_instruction=record["user_instruction"],
-                parsed_markdown_path=record["parsed_markdown_path"],
-                parsed_pages_path=record["parsed_pages_path"],
-                progress_cb=progress_cb,
+                self._generate_checklist_with_local_artifacts,
+                record,
+                progress_cb,
             )
             finalized = await asyncio.to_thread(self._finalize_checklist_success, draft_id, result)
             if not finalized:
@@ -1199,12 +1343,36 @@ class UploadPipelineService:
             snapshot = await asyncio.to_thread(self.get_checklist_draft_snapshot, draft_id)
             if snapshot:
                 await self.event_bus.publish(draft_id, snapshot.model_dump(mode="json"))
-            raise
         except Exception as exc:
             await asyncio.to_thread(self._mark_checklist_failed, draft_id, exc)
             snapshot = await asyncio.to_thread(self.get_checklist_draft_snapshot, draft_id)
             if snapshot:
                 await self.event_bus.publish(draft_id, snapshot.model_dump(mode="json"))
+
+    def _generate_checklist_with_local_artifacts(
+        self,
+        record: dict[str, Any],
+        progress_cb,
+    ) -> ChecklistDraftOutput:
+        with self.storage.local_path_for_processing(record["parsed_markdown_uri"], suffix=".md") as parsed_markdown_path:
+            if isinstance(record.get("parsed_pages_uri"), str) and record["parsed_pages_uri"]:
+                with self.storage.local_path_for_processing(record["parsed_pages_uri"], suffix=".json") as parsed_pages_path:
+                    return self.checklist_agent.generate(
+                        document_id=record["document_id"],
+                        selected_source_ids=record["selected_source_ids"],
+                        user_instruction=record["user_instruction"],
+                        parsed_markdown_path=parsed_markdown_path,
+                        parsed_pages_path=parsed_pages_path,
+                        progress_cb=progress_cb,
+                    )
+            return self.checklist_agent.generate(
+                document_id=record["document_id"],
+                selected_source_ids=record["selected_source_ids"],
+                user_instruction=record["user_instruction"],
+                parsed_markdown_path=parsed_markdown_path,
+                parsed_pages_path=None,
+                progress_cb=progress_cb,
+            )
 
     def _get_checklist_job_record(self, draft_id: uuid.UUID) -> dict[str, Any] | None:
         with self.session_factory() as session:
@@ -1221,17 +1389,16 @@ class UploadPipelineService:
                 .where(DocumentParseJob.document_id == doc.id)
                 .order_by(DocumentParseJob.created_at.desc())
             ).scalars().first()
-            parsed_pages_uri = None
-            if parse_job is not None and isinstance(parse_job.meta_json, dict):
-                value = parse_job.meta_json.get("parsed_pages_uri")
-                if isinstance(value, str) and value:
-                    parsed_pages_uri = Path(value)
             return {
                 "document_id": doc.id,
                 "selected_source_ids": list(job.selected_source_ids or []),
                 "user_instruction": job.user_instruction,
-                "parsed_markdown_path": Path(doc.extracted_text_uri),
-                "parsed_pages_path": parsed_pages_uri,
+                "parsed_markdown_uri": doc.extracted_text_uri,
+                "parsed_pages_uri": (
+                    parse_job.meta_json.get("parsed_pages_uri")
+                    if parse_job is not None and isinstance(parse_job.meta_json, dict)
+                    else None
+                ),
             }
 
     async def _transition_checklist_job(
@@ -1682,11 +1849,11 @@ class UploadPipelineService:
                 .where(DocumentParseJob.document_id == document.id)
                 .order_by(DocumentParseJob.created_at.desc())
             ).scalars().first()
-            parsed_pages_uri = None
-            if parse_job is not None and isinstance(parse_job.meta_json, dict):
-                value = parse_job.meta_json.get("parsed_pages_uri")
-                if isinstance(value, str) and value:
-                    parsed_pages_uri = Path(value)
+            parsed_pages_uri = (
+                parse_job.meta_json.get("parsed_pages_uri")
+                if parse_job is not None and isinstance(parse_job.meta_json, dict)
+                else None
+            )
             chunk_count = len(
                 session.execute(select(DocumentChunk.id).where(DocumentChunk.document_id == document.id)).scalars().all()
             )
@@ -1695,13 +1862,13 @@ class UploadPipelineService:
                 "selected_source_ids": list(approved.selected_source_ids or []),
                 "approved_checklist": ChecklistDocument.model_validate(approved.checklist_json),
                 "sources": self.review_agent.load_sources(list(approved.selected_source_ids or [])),
-                "dpa_pages": self._load_dpa_pages(Path(document.extracted_text_uri), parsed_pages_uri),
+                "dpa_pages": self._load_dpa_pages(document.extracted_text_uri, parsed_pages_uri),
                 "chunk_count": chunk_count,
             }
 
-    def _load_dpa_pages(self, parsed_markdown_path: Path, parsed_pages_path: Path | None) -> list[DpaPageRecord]:
-        if parsed_pages_path and parsed_pages_path.exists():
-            payload = json.loads(parsed_pages_path.read_text(encoding="utf-8"))
+    def _load_dpa_pages(self, parsed_markdown_uri: str, parsed_pages_uri: str | None) -> list[DpaPageRecord]:
+        if isinstance(parsed_pages_uri, str) and parsed_pages_uri:
+            payload = self.storage.read_json(parsed_pages_uri)
             pages_raw = payload.get("pages")
             if isinstance(pages_raw, list):
                 pages: list[DpaPageRecord] = []
@@ -1715,7 +1882,7 @@ class UploadPipelineService:
                 if pages:
                     return pages
 
-        text = parsed_markdown_path.read_text(encoding="utf-8")
+        text = self.storage.read_text(parsed_markdown_uri)
         matches = list(re.finditer(r"(?m)^page_no:\s*(\d+)\s*$", text))
         pages = []
         for index, match in enumerate(matches):

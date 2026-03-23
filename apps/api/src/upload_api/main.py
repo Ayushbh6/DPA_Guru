@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import uuid
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 
 from .config import load_settings
 from .db import build_session_factory
@@ -18,13 +19,13 @@ from .schemas import (
     CreateProjectRequest,
     RenameProjectRequest,
 )
-from .storage import LocalStorage
+from .storage import ArtifactStore
 
 
 settings = load_settings()
 session_factory = build_session_factory(settings.database_url)
 event_bus = JobEventBus()
-storage = LocalStorage(settings.upload_storage_dir, settings.parsed_storage_dir)
+storage = ArtifactStore.from_settings(settings)
 service = UploadPipelineService(
     settings=settings,
     session_factory=session_factory,
@@ -80,11 +81,11 @@ def create_app() -> FastAPI:
     @app.get("/v1/documents/{document_id}/file")
     async def get_document_file(document_id: uuid.UUID):
         document = await asyncio.to_thread(service.get_document_file, document_id)
-        return FileResponse(
-            path=document.path,
+        headers = {"content-disposition": f'inline; filename="{document.filename}"'}
+        return StreamingResponse(
+            io.BytesIO(document.content),
             media_type=document.mime_type,
-            filename=document.filename,
-            content_disposition_type="inline",
+            headers=headers,
         )
 
     @app.get("/v1/documents/{document_id}/parsed-text")

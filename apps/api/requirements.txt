@@ -1,4 +1,5 @@
 alembic
+boto3
 docker
 fastapi
 mistralai

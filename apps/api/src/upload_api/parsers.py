@@ -68,13 +68,16 @@ class ParsedPage:
     page_images: list[ParsedPageImage]
 
 
-def _render_pages_markdown(pages: list[ParsedPage]) -> str:
+def _render_pages_markdown(pages: list[ParsedPage], *, include_images: bool) -> str:
     blocks: list[str] = []
     for page in pages:
         blocks.append(f"page_no: {page.page_no}")
         blocks.append("page_text:")
         blocks.append(page.page_text.strip() or "")
-        if page.page_images:
+        # Image persistence is intentionally disabled by default to control storage costs.
+        # Keep the page_images rendering code path available behind a flag so it can be
+        # re-enabled later without reworking the OCR parser integration.
+        if include_images and page.page_images:
             blocks.append("page_images:")
             for image in page.page_images:
                 blocks.append(f"- image_id: {image.image_id}")
@@ -153,9 +156,10 @@ def estimate_token_count(text: str, encoding_name: str) -> int:
     if tiktoken is not None:
         try:
             enc = tiktoken.get_encoding(encoding_name)
+            return len(enc.encode(text))
         except Exception:
-            enc = tiktoken.get_encoding("cl100k_base")
-        return len(enc.encode(text))
+            # Fall back when tiktoken assets are unavailable offline.
+            return max(1, len(text.split()))
     return max(1, len(text.split()))
 
 
@@ -206,6 +210,7 @@ async def parse_with_mistral_ocr(
     mime_type: str,
     api_key: str,
     model: str,
+    include_image_base64: bool,
     progress_cb: ProgressCallback | None = None,
 ) -> ParseOutput:
     if Mistral is None:
@@ -222,7 +227,7 @@ async def parse_with_mistral_ocr(
                     "document_url": _document_data_url(file_path, mime_type),
                 },
                 table_format="markdown",
-                include_image_base64=True,
+                include_image_base64=include_image_base64,
                 extract_header=False,
                 extract_footer=False,
             )
@@ -232,9 +237,18 @@ async def parse_with_mistral_ocr(
         pages = _extract_mistral_pages(payload)
         if not pages:
             raise RuntimeError("Mistral OCR returned no page output.")
+        if not include_image_base64:
+            pages = [
+                ParsedPage(
+                    page_no=page.page_no,
+                    page_text=page.page_text,
+                    page_images=[],
+                )
+                for page in pages
+            ]
         usage_info = payload.get("usage_info") if isinstance(payload.get("usage_info"), dict) else {}
         return ParseOutput(
-            text=_render_pages_markdown(pages),
+            text=_render_pages_markdown(pages, include_images=include_image_base64),
             text_format="markdown",
             page_count=len(pages),
             parser_route="mistral_ocr",
@@ -243,7 +257,7 @@ async def parse_with_mistral_ocr(
                 "mistral_model": payload.get("model") or model,
                 "mistral_usage_info": usage_info,
                 "page_count": len(pages),
-                "includes_image_base64": True,
+                "includes_image_base64": include_image_base64,
                 "table_format": "markdown",
             },
         )

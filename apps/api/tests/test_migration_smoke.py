@@ -44,6 +44,7 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                     "users",
                     "projects",
                     "documents",
+                    "document_artifacts",
                     "document_parse_jobs",
                     "checklist_draft_jobs",
                     "approved_checklists",
@@ -90,6 +91,8 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 assert "checklist_draft_jobs_document_created_idx" in idx_names
                 assert "checklist_draft_jobs_status_updated_idx" in idx_names
                 assert "documents_project_uidx" in idx_names
+                assert "document_artifacts_document_type_created_idx" in idx_names
+                assert "document_artifacts_tenant_created_idx" in idx_names
                 assert "document_parse_jobs_project_created_idx" in idx_names
                 assert "checklist_draft_jobs_project_created_idx" in idx_names
                 assert "analysis_runs_project_started_idx" in idx_names
@@ -103,6 +106,7 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                         FROM pg_class
                         WHERE relname IN (
                           'tenants', 'users', 'documents', 'document_chunks',
+                          'document_artifacts',
                           'projects', 'document_parse_jobs', 'checklist_draft_jobs', 'analysis_runs', 'findings', 'rule_hits',
                           'review_actions', 'billing_events', 'audit_events'
                         )
@@ -216,6 +220,37 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                         "storage_uri": "supabase://bucket/path/sample-dpa.pdf",
                     },
                 ).scalar_one()
+
+                artifact_id = conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO document_artifacts (
+                          tenant_id, project_id, document_id, artifact_type, storage_provider, bucket,
+                          object_key, object_uri, content_type, byte_size, sha256, active
+                        )
+                        VALUES (
+                          :tenant_id, :project_id, :document_id, :artifact_type, :storage_provider, :bucket,
+                          :object_key, :object_uri, :content_type, :byte_size, :sha256, :active
+                        )
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "document_id": document_id,
+                        "artifact_type": "SOURCE_PDF",
+                        "storage_provider": "r2",
+                        "bucket": "docs",
+                        "object_key": "tenants/acme/projects/demo/documents/sample/source/original.pdf",
+                        "object_uri": "r2://docs/tenants/acme/projects/demo/documents/sample/source/original.pdf",
+                        "content_type": "application/pdf",
+                        "byte_size": 1024,
+                        "sha256": "f" * 64,
+                        "active": True,
+                    },
+                ).scalar_one()
+                assert artifact_id is not None
 
                 run_id = conn.execute(
                     sa.text(

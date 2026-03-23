@@ -103,6 +103,31 @@ class DocumentParseJob(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class DocumentArtifact(Base):
+    __tablename__ = "document_artifacts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
+    artifact_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    bucket: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    object_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    object_uri: Mapped[str] = mapped_column(String(1024), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("document_parse_jobs.id"), nullable=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB(astext_type=Text()), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
 class ChecklistDraftJob(Base):
     __tablename__ = "checklist_draft_jobs"
 

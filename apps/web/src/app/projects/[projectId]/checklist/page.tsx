@@ -43,14 +43,18 @@ export default function SetupChecklistPage() {
   const parseReady = document?.parse_status === "COMPLETED";
   const isGenerating = checklistDraft && !["COMPLETED", "FAILED"].includes(checklistDraft.status);
 
-  const preselected = checklistDraft?.selected_source_ids?.length
-    ? checklistDraft.selected_source_ids
+  const persistedSelectedSourceIds = checklistDraft?.result?.meta.selected_source_ids?.length
+    ? checklistDraft.result.meta.selected_source_ids
+    : checklistDraft?.selected_source_ids?.length
+      ? checklistDraft.selected_source_ids
     : sources.map((src) => src.source_id);
   const defaultSelected = Object.fromEntries(
-    sources.map((src) => [src.source_id, preselected.includes(src.source_id)]),
+    sources.map((src) => [src.source_id, persistedSelectedSourceIds.includes(src.source_id)]),
   );
 
-  const effectiveSelected = Object.keys(selected).length ? selected : defaultSelected;
+  const effectiveSelected = Object.keys(selected).length
+    ? Object.fromEntries(sources.map((src) => [src.source_id, Boolean(selected[src.source_id])]))
+    : defaultSelected;
   const effectiveInstruction = instructionOverride ?? checklistDraft?.user_instruction ?? "";
 
   const selectedIds = sources.filter((src) => effectiveSelected[src.source_id]).map((src) => src.source_id);
@@ -134,14 +138,14 @@ export default function SetupChecklistPage() {
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {sources.map((src) => {
-            const checked = Boolean(selected[src.source_id]);
+            const checked = Boolean(effectiveSelected[src.source_id]);
             return (
               <button
                 type="button"
                 key={src.source_id}
                 onClick={() =>
                   setSelected((prev) => {
-                    const base = Object.keys(prev).length ? prev : defaultSelected;
+                    const base = Object.keys(prev).length ? effectiveSelected : defaultSelected;
                     return { ...base, [src.source_id]: !base[src.source_id] };
                   })
                 }

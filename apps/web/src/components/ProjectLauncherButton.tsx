@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { LoaderCircle, Plus } from "lucide-react";
 
 import { createProject } from "@/lib/uploadApi";
+import { useAuth } from "@/components/AuthProvider";
 
 type Props = {
   className?: string;
@@ -18,9 +19,14 @@ export default function ProjectLauncherButton({
   icon = false,
 }: Props) {
   const router = useRouter();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
 
   async function handleClick() {
+    if (!user) {
+      router.push("/login");
+      return;
+    }
     if (loading) return;
     setLoading(true);
     try {

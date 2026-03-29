@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import mimetypes
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ from .checklist_agent import ChecklistDraftAgent
 from .config import Settings
 from .document_retrieval import DpaPageRecord, DocumentChunkIndexer, derive_evidence_metadata
 from .events import JobEventBus
+from .logging_utils import log_event
 from .parsers import (
     estimate_token_count,
     inspect_pdf,
@@ -88,6 +90,7 @@ CHECKLIST_STAGE_PROGRESS = {
     "EXPANDING_SOURCE_CONTEXT": 32,
     "INSPECTING_DPA": 50,
     "DRAFTING_CHECKLIST": 74,
+    "SYNTHESIZING": 84,
     "VALIDATING_OUTPUT": 92,
     "COMPLETED": 100,
     "FAILED": 100,
@@ -105,8 +108,6 @@ ANALYSIS_STAGE_PROGRESS = {
 ALLOWED_EXTENSIONS = {".pdf": "pdf", ".docx": "docx"}
 DEFAULT_DEV_TENANT_NAME = "Local Dev Tenant"
 UNTITLED_PROJECT_NAME = "Untitled analysis"
-DEFAULT_APPROVAL_OWNER = "local-dev-owner"
-DEFAULT_APPROVED_BY = "local-dev-reviewer"
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,11 @@ class DocumentFileResult:
 @dataclass(frozen=True)
 class DocumentParsedTextResult:
     text: str
+
+
+@dataclass(frozen=True)
+class PurgeDeletedProjectsResult:
+    purged_project_ids: list[uuid.UUID]
 
 
 class UploadPipelineService:
@@ -217,12 +223,19 @@ class UploadPipelineService:
 
             session.commit()
 
-    def create_project(self, name: str | None = None) -> CreateProjectResponse:
+    def create_project(
+        self,
+        name: str | None = None,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> CreateProjectResponse:
         with self.session_factory() as session:
             tenant = self._ensure_dev_tenant(session)
             now = utcnow()
             project = Project(
                 tenant_id=tenant.id,
+                owner_username=actor_username,
                 name=(name or "").strip() or UNTITLED_PROJECT_NAME,
                 status="EMPTY",
                 created_at=now,
@@ -230,17 +243,31 @@ class UploadPipelineService:
                 last_activity_at=now,
             )
             session.add(project)
+            session.flush()
+            actor_type, actor_id = self._actor_fields(actor_username)
+            self._record_audit_event(
+                session,
+                tenant_id=tenant.id,
+                event_name="project_created",
+                resource_type="project",
+                resource_id=str(project.id),
+                trace_id=self._normalize_trace_id(trace_id),
+                actor_type=actor_type,
+                actor_id=actor_id,
+                metadata_json={"project_id": str(project.id)},
+            )
             session.commit()
             session.refresh(project)
             summary = self._build_project_summary(session, project)
             return CreateProjectResponse(**summary.model_dump(mode="python"), workspace_url=f"/projects/{project.id}")
 
-    def list_projects(self) -> list[ProjectSummary]:
+    def list_projects(self, *, actor_username: str) -> list[ProjectSummary]:
         with self.session_factory() as session:
             tenant = self._ensure_dev_tenant(session)
             projects = session.execute(
                 select(Project)
                 .where(Project.tenant_id == tenant.id)
+                .where(Project.owner_username == actor_username)
                 .where(Project.status != "DELETED")
                 .order_by(Project.last_activity_at.desc(), Project.updated_at.desc(), Project.created_at.desc())
             ).scalars().all()
@@ -248,48 +275,83 @@ class UploadPipelineService:
             session.commit()
             return summaries
 
-    def get_project_detail(self, project_id: uuid.UUID) -> ProjectDetail | None:
+    def get_project_detail(self, project_id: uuid.UUID, *, actor_username: str) -> ProjectDetail | None:
         with self.session_factory() as session:
-            tenant = self._ensure_dev_tenant(session)
-            project = session.execute(
-                select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id)
-            ).scalar_one_or_none()
-            if project is None:
+            try:
+                project = self._require_owned_project(
+                    session,
+                    project_id=project_id,
+                    actor_username=actor_username,
+                )
+            except HTTPException:
                 return None
             detail = self._build_project_detail(session, project)
             session.commit()
             return detail
 
-    def rename_project(self, project_id: uuid.UUID, name: str) -> ProjectDetail | None:
+    def rename_project(
+        self,
+        project_id: uuid.UUID,
+        name: str,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> ProjectDetail | None:
         clean_name = name.strip()
         if not clean_name:
             raise HTTPException(status_code=400, detail="Project name is required.")
 
         with self.session_factory() as session:
-            tenant = self._ensure_dev_tenant(session)
-            project = session.execute(
-                select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id)
-            ).scalar_one_or_none()
-            if project is None:
+            try:
+                project = self._require_owned_project(
+                    session,
+                    project_id=project_id,
+                    actor_username=actor_username,
+                )
+            except HTTPException:
                 return None
             project.name = clean_name
             project.updated_at = utcnow()
             project.last_activity_at = utcnow()
+            actor_type, actor_id = self._actor_fields(actor_username)
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name="project_renamed",
+                resource_type="project",
+                resource_id=str(project.id),
+                trace_id=self._normalize_trace_id(trace_id),
+                actor_type=actor_type,
+                actor_id=actor_id,
+                metadata_json={"project_id": str(project.id), "name": clean_name},
+            )
             session.commit()
             session.refresh(project)
             return self._build_project_detail(session, project)
 
-    def delete_project(self, project_id: uuid.UUID) -> None:
+    def delete_project(self, project_id: uuid.UUID, *, actor_username: str, trace_id: str | None = None) -> None:
         with self.session_factory() as session:
-            tenant = self._ensure_dev_tenant(session)
-            project = session.execute(
-                select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id)
-            ).scalar_one_or_none()
-            if project is None:
-                raise HTTPException(status_code=404, detail="Project not found.")
+            project = self._require_owned_project(
+                session,
+                project_id=project_id,
+                actor_username=actor_username,
+            )
             project.status = "DELETED"
+            project.deleted_at = utcnow()
             project.updated_at = utcnow()
             project.last_activity_at = utcnow()
+            actor_type, actor_id = self._actor_fields(actor_username)
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name="project_deleted",
+                resource_type="project",
+                resource_id=str(project.id),
+                trace_id=self._normalize_trace_id(trace_id),
+                actor_type=actor_type,
+                actor_id=actor_id,
+                metadata_json={"project_id": str(project.id), "deleted_at": project.deleted_at.isoformat()},
+            )
             session.commit()
 
     async def create_upload(
@@ -299,6 +361,8 @@ class UploadPipelineService:
         filename: str,
         mime_type: str | None,
         data: bytes,
+        actor_username: str,
+        trace_id: str | None = None,
     ) -> UploadBootstrapResponse:
         ext = Path(filename).suffix.lower()
         if ext not in ALLOWED_EXTENSIONS:
@@ -311,7 +375,8 @@ class UploadPipelineService:
         mime_type = (mime_type or mimetypes.guess_type(filename)[0] or "").strip() or "application/octet-stream"
         file_type = ALLOWED_EXTENSIONS[ext]
         job_id = uuid.uuid4()
-        context = await asyncio.to_thread(self._prepare_upload_context, project_id)
+        trace_id = self._normalize_trace_id(trace_id)
+        context = await asyncio.to_thread(self._prepare_upload_context, project_id, actor_username, trace_id)
         upload_artifact = self.storage.save_upload(
             tenant_id=context.tenant_id,
             project_id=context.project_id,
@@ -329,6 +394,8 @@ class UploadPipelineService:
             mime_type,
             file_type,
             upload_artifact,
+            actor_username,
+            trace_id,
         )
         await self._schedule_job(created.job_id)
 
@@ -341,21 +408,46 @@ class UploadPipelineService:
             status_url=f"/v1/uploads/{created.job_id}",
         )
 
-    def _prepare_upload_context(self, project_id: uuid.UUID) -> UploadContext:
+    def _prepare_upload_context(self, project_id: uuid.UUID, actor_username: str, trace_id: str) -> UploadContext:
         with self.session_factory() as session:
-            tenant = self._ensure_dev_tenant(session)
-            project = session.execute(
-                select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id)
-            ).scalar_one_or_none()
-            if project is None:
-                raise HTTPException(status_code=404, detail="Project not found.")
+            project = self._require_owned_project(
+                session,
+                project_id=project_id,
+                actor_username=actor_username,
+            )
             existing_document = session.execute(
                 select(Document.id).where(Document.project_id == project.id)
             ).scalar_one_or_none()
             if existing_document is not None:
                 raise HTTPException(status_code=409, detail="This project already has a document.")
+            total_documents = self._count_documents_for_alpha_quota(session)
+            if total_documents >= self.settings.alpha_max_total_documents:
+                actor_type, actor_id = self._actor_fields(actor_username)
+                self._record_audit_event(
+                    session,
+                    tenant_id=project.tenant_id,
+                    event_name="document_upload_quota_denied",
+                    resource_type="project",
+                    resource_id=str(project.id),
+                    trace_id=trace_id,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    metadata_json={
+                        "project_id": str(project.id),
+                        "quota": self.settings.alpha_max_total_documents,
+                        "current_total_documents": total_documents,
+                    },
+                )
+                session.commit()
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Upload limit reached for this private alpha. "
+                        "Please delete older projects or contact the operator to raise the cap."
+                    ),
+                )
             return UploadContext(
-                tenant_id=tenant.id,
+                tenant_id=project.tenant_id,
                 project_id=project.id,
                 document_id=uuid.uuid4(),
             )
@@ -368,15 +460,16 @@ class UploadPipelineService:
         mime_type: str,
         file_type: str,
         upload_artifact: StoredArtifact,
+        actor_username: str,
+        trace_id: str,
     ) -> UploadCreateResult:
         source_artifact_type = "SOURCE_PDF" if file_type == "pdf" else "SOURCE_DOCX"
         with self.session_factory() as session:
-            tenant = self._ensure_dev_tenant(session)
-            project = session.execute(
-                select(Project).where(Project.id == context.project_id, Project.tenant_id == tenant.id)
-            ).scalar_one_or_none()
-            if project is None:
-                raise HTTPException(status_code=404, detail="Project not found.")
+            project = self._require_owned_project(
+                session,
+                project_id=context.project_id,
+                actor_username=actor_username,
+            )
             existing_document = session.execute(
                 select(Document.id).where(Document.project_id == project.id)
             ).scalar_one_or_none()
@@ -384,7 +477,7 @@ class UploadPipelineService:
                 raise HTTPException(status_code=409, detail="This project already has a document.")
             document = Document(
                 id=context.document_id,
-                tenant_id=tenant.id,
+                tenant_id=project.tenant_id,
                 project_id=project.id,
                 filename=filename,
                 mime_type=mime_type,
@@ -397,7 +490,7 @@ class UploadPipelineService:
 
             job = DocumentParseJob(
                 id=job_id,
-                tenant_id=tenant.id,
+                tenant_id=project.tenant_id,
                 project_id=project.id,
                 document_id=document.id,
                 status="QUEUED",
@@ -405,13 +498,13 @@ class UploadPipelineService:
                 progress_pct=STAGE_PROGRESS["UPLOADING"],
                 message="Upload received. Queuing background processing.",
                 file_type=file_type,
-                meta_json={"original_filename": filename},
+                meta_json={"original_filename": filename, "initiated_by_username": actor_username},
             )
             session.add(job)
             session.flush()
             source_artifact = self._replace_active_artifact(
                 session,
-                tenant_id=tenant.id,
+                tenant_id=project.tenant_id,
                 project_id=project.id,
                 document_id=document.id,
                 artifact_type=source_artifact_type,
@@ -421,23 +514,44 @@ class UploadPipelineService:
             )
             self._record_audit_event(
                 session,
-                tenant_id=tenant.id,
+                tenant_id=project.tenant_id,
                 event_name="document_uploaded",
                 resource_type="document",
                 resource_id=str(document.id),
-                trace_id=str(job.id),
+                trace_id=trace_id,
+                actor_type="USER",
+                actor_id=actor_username,
+                metadata_json={
+                    "project_id": str(project.id),
+                    "document_id": str(document.id),
+                    "job_id": str(job.id),
+                    "filename": filename,
+                },
             )
             self._record_audit_event(
                 session,
-                tenant_id=tenant.id,
+                tenant_id=project.tenant_id,
                 event_name="document_artifact_stored",
                 resource_type="document_artifact",
                 resource_id=str(source_artifact.id),
-                trace_id=str(job.id),
+                trace_id=trace_id,
+                actor_type="USER",
+                actor_id=actor_username,
+                metadata_json={
+                    "project_id": str(project.id),
+                    "document_id": str(document.id),
+                    "job_id": str(job.id),
+                    "object_uri": upload_artifact.object_uri,
+                },
             )
             self._sync_project_state(session, project.id)
             session.commit()
-            return UploadCreateResult(job_id=job.id, document_id=document.id, project_id=project.id, tenant_id=tenant.id)
+            return UploadCreateResult(
+                job_id=job.id,
+                document_id=document.id,
+                project_id=project.id,
+                tenant_id=project.tenant_id,
+            )
 
     def _ensure_dev_tenant(self, session: Session) -> Tenant:
         tenant = session.get(Tenant, self.settings.default_dev_tenant_id)
@@ -452,6 +566,114 @@ class UploadPipelineService:
         session.add(tenant)
         session.flush()
         return tenant
+
+    def _normalize_trace_id(self, trace_id: str | None) -> str:
+        return (trace_id or str(uuid.uuid4())).strip()
+
+    def _actor_fields(self, actor_username: str | None) -> tuple[str, str]:
+        if actor_username and actor_username.strip():
+            username = actor_username.strip()
+            return "USER", username
+        return "SYSTEM", "upload-pipeline"
+
+    def _require_owned_project(
+        self,
+        session: Session,
+        *,
+        project_id: uuid.UUID,
+        actor_username: str,
+        include_deleted: bool = False,
+    ) -> Project:
+        tenant = self._ensure_dev_tenant(session)
+        project = session.execute(
+            select(Project).where(
+                Project.id == project_id,
+                Project.tenant_id == tenant.id,
+                Project.owner_username == actor_username,
+            )
+        ).scalar_one_or_none()
+        if project is None or (not include_deleted and project.status == "DELETED"):
+            raise HTTPException(status_code=404, detail="Project not found.")
+        return project
+
+    def _require_owned_document(
+        self,
+        session: Session,
+        *,
+        document_id: uuid.UUID,
+        actor_username: str,
+        include_deleted: bool = False,
+    ) -> tuple[Project, Document]:
+        row = session.execute(
+            select(Project, Document)
+            .join(Document, Document.project_id == Project.id)
+            .where(Document.id == document_id, Project.owner_username == actor_username)
+        ).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        project, document = row
+        if not include_deleted and project.status == "DELETED":
+            raise HTTPException(status_code=404, detail="Document not found.")
+        return project, document
+
+    def _require_owned_upload_job(
+        self,
+        session: Session,
+        *,
+        job_id: uuid.UUID,
+        actor_username: str,
+    ) -> tuple[Project, DocumentParseJob, Document]:
+        row = session.execute(
+            select(Project, DocumentParseJob, Document)
+            .join(DocumentParseJob, DocumentParseJob.project_id == Project.id)
+            .join(Document, Document.id == DocumentParseJob.document_id)
+            .where(DocumentParseJob.id == job_id, Project.owner_username == actor_username, Project.status != "DELETED")
+        ).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Upload job not found.")
+        return row
+
+    def _require_owned_checklist_job(
+        self,
+        session: Session,
+        *,
+        draft_id: uuid.UUID,
+        actor_username: str,
+    ) -> tuple[Project, ChecklistDraftJob, Document]:
+        row = session.execute(
+            select(Project, ChecklistDraftJob, Document)
+            .join(ChecklistDraftJob, ChecklistDraftJob.project_id == Project.id)
+            .join(Document, Document.id == ChecklistDraftJob.document_id)
+            .where(ChecklistDraftJob.id == draft_id, Project.owner_username == actor_username, Project.status != "DELETED")
+        ).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Checklist draft job not found.")
+        return row
+
+    def _require_owned_analysis_run(
+        self,
+        session: Session,
+        *,
+        run_id: uuid.UUID,
+        actor_username: str,
+    ) -> tuple[Project, AnalysisRun]:
+        row = session.execute(
+            select(Project, AnalysisRun)
+            .join(AnalysisRun, AnalysisRun.project_id == Project.id)
+            .where(AnalysisRun.id == run_id, Project.owner_username == actor_username, Project.status != "DELETED")
+        ).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Analysis run not found.")
+        return row
+
+    def _count_documents_for_alpha_quota(self, session: Session) -> int:
+        return len(
+            session.execute(
+                select(Document.id)
+                .join(Project, Project.id == Document.project_id)
+                .where(Project.purged_at.is_(None))
+            ).scalars().all()
+        )
 
     def _replace_active_artifact(
         self,
@@ -505,6 +727,7 @@ class UploadPipelineService:
         trace_id: str,
         actor_type: str = "SYSTEM",
         actor_id: str = "upload-pipeline",
+        metadata_json: dict[str, Any] | None = None,
     ) -> None:
         session.add(
             AuditEvent(
@@ -515,6 +738,7 @@ class UploadPipelineService:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 trace_id=trace_id,
+                metadata_json=metadata_json,
             )
         )
 
@@ -753,25 +977,65 @@ class UploadPipelineService:
             analysis_run=run_summary,
         )
 
-    def get_document_file(self, document_id: uuid.UUID) -> DocumentFileResult:
+    def get_document_file(
+        self,
+        document_id: uuid.UUID,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> DocumentFileResult:
         with self.session_factory() as session:
-            document = session.get(Document, document_id)
-            if document is None:
-                raise HTTPException(status_code=404, detail="Document not found.")
+            project, document = self._require_owned_document(
+                session,
+                document_id=document_id,
+                actor_username=actor_username,
+            )
             mime_type = document.mime_type or mimetypes.guess_type(document.filename)[0]
+            self._record_audit_event(
+                session,
+                tenant_id=document.tenant_id,
+                event_name="document_file_viewed",
+                resource_type="document",
+                resource_id=str(document.id),
+                trace_id=self._normalize_trace_id(trace_id),
+                actor_type="USER",
+                actor_id=actor_username,
+                metadata_json={"project_id": str(project.id), "document_id": str(document.id)},
+            )
+            session.commit()
             return DocumentFileResult(
                 content=self.storage.read_bytes(document.storage_uri),
                 filename=document.filename,
                 mime_type=mime_type,
             )
 
-    def get_document_parsed_text(self, document_id: uuid.UUID) -> DocumentParsedTextResult:
+    def get_document_parsed_text(
+        self,
+        document_id: uuid.UUID,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> DocumentParsedTextResult:
         with self.session_factory() as session:
-            document = session.get(Document, document_id)
-            if document is None:
-                raise HTTPException(status_code=404, detail="Document not found.")
+            project, document = self._require_owned_document(
+                session,
+                document_id=document_id,
+                actor_username=actor_username,
+            )
             if not document.extracted_text_uri:
                 raise HTTPException(status_code=404, detail="Parsed text is unavailable for this document.")
+            self._record_audit_event(
+                session,
+                tenant_id=document.tenant_id,
+                event_name="document_parsed_text_viewed",
+                resource_type="document",
+                resource_id=str(document.id),
+                trace_id=self._normalize_trace_id(trace_id),
+                actor_type="USER",
+                actor_id=actor_username,
+                metadata_json={"project_id": str(project.id), "document_id": str(document.id)},
+            )
+            session.commit()
             return DocumentParsedTextResult(text=self.storage.read_text(document.extracted_text_uri))
 
     async def _schedule_job(self, job_id: uuid.UUID) -> None:
@@ -800,13 +1064,19 @@ class UploadPipelineService:
         async with self._tasks_lock:
             self._checklist_tasks.pop(draft_id, None)
 
-    async def cancel_checklist_draft(self, draft_id: uuid.UUID) -> ChecklistDraftSnapshot:
+    async def cancel_checklist_draft(
+        self,
+        draft_id: uuid.UUID,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> ChecklistDraftSnapshot:
         async with self._tasks_lock:
             task = self._checklist_tasks.get(draft_id)
             if task and not task.done():
                 task.cancel()
-        await asyncio.to_thread(self._cancel_checklist_draft_sync, draft_id)
-        snapshot = await asyncio.to_thread(self.get_checklist_draft_snapshot, draft_id)
+        await asyncio.to_thread(self._cancel_checklist_draft_sync, draft_id, actor_username, self._normalize_trace_id(trace_id))
+        snapshot = await asyncio.to_thread(self.get_checklist_draft_snapshot, draft_id, actor_username=actor_username)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Checklist draft job not found.")
         await self.event_bus.publish(draft_id, snapshot.model_dump(mode="json"))
@@ -1158,6 +1428,14 @@ class UploadPipelineService:
                 resource_type="document",
                 resource_id=str(doc.id),
                 trace_id=str(job.id),
+                metadata_json={
+                    "project_id": str(doc.project_id),
+                    "document_id": str(doc.id),
+                    "job_id": str(job.id),
+                    "initiated_by_username": meta.get("initiated_by_username"),
+                    "page_count": page_count,
+                    "token_count_estimate": token_count_estimate,
+                },
             )
             self._record_audit_event(
                 session,
@@ -1166,6 +1444,13 @@ class UploadPipelineService:
                 resource_type="document_artifact",
                 resource_id=str(parsed_artifact_row.id),
                 trace_id=str(job.id),
+                metadata_json={
+                    "project_id": str(doc.project_id),
+                    "document_id": str(doc.id),
+                    "job_id": str(job.id),
+                    "initiated_by_username": meta.get("initiated_by_username"),
+                    "object_uri": parsed_artifact.object_uri,
+                },
             )
             self._sync_project_state(session, job.project_id)
             session.commit()
@@ -1189,28 +1474,65 @@ class UploadPipelineService:
             doc = session.get(Document, job.document_id)
             if doc is not None:
                 doc.parse_status = "FAILED"
+            initiated_by_username = None
+            if isinstance(job.meta_json, dict):
+                initiated_by_username = job.meta_json.get("initiated_by_username")
+            self._record_audit_event(
+                session,
+                tenant_id=job.tenant_id,
+                event_name="document_parse_failed",
+                resource_type="document_parse_job",
+                resource_id=str(job.id),
+                trace_id=str(job.id),
+                metadata_json={
+                    "project_id": str(job.project_id),
+                    "document_id": str(job.document_id),
+                    "job_id": str(job.id),
+                    "initiated_by_username": initiated_by_username,
+                    "error_code": job.error_code,
+                },
+            )
             self._sync_project_state(session, job.project_id)
             session.commit()
+        log_event(
+            logging.ERROR,
+            severity="error",
+            event="document_parse_failed",
+            job_id=str(job_id),
+            error_code=exc.__class__.__name__,
+            error_message=str(exc),
+            actor_username=initiated_by_username,
+        )
 
-    def get_job_snapshot(self, job_id: uuid.UUID) -> UploadJobSnapshot | None:
+    def get_job_snapshot(self, job_id: uuid.UUID, *, actor_username: str | None = None) -> UploadJobSnapshot | None:
         with self.session_factory() as session:
-            row = session.execute(
-                select(DocumentParseJob, Document)
-                .join(Document, Document.id == DocumentParseJob.document_id)
-                .where(DocumentParseJob.id == job_id)
-            ).first()
-            if not row:
-                return None
-            job, doc = row
+            if actor_username is not None:
+                try:
+                    _, job, doc = self._require_owned_upload_job(session, job_id=job_id, actor_username=actor_username)
+                except HTTPException:
+                    return None
+            else:
+                row = session.execute(
+                    select(DocumentParseJob, Document)
+                    .join(Document, Document.id == DocumentParseJob.document_id)
+                    .where(DocumentParseJob.id == job_id)
+                ).first()
+                if not row:
+                    return None
+                job, doc = row
             return self._build_upload_snapshot(job, doc)
 
-    def get_job_result(self, job_id: uuid.UUID) -> dict[str, Any]:
-        snapshot = self.get_job_snapshot(job_id)
+    def get_job_result(self, job_id: uuid.UUID, *, actor_username: str | None = None) -> dict[str, Any]:
+        snapshot = self.get_job_snapshot(job_id, actor_username=actor_username)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="Upload job not found.")
         if snapshot.status != "COMPLETED" or snapshot.result is None:
             raise HTTPException(status_code=409, detail="Upload job is not completed yet.")
         return snapshot.model_dump(mode="json")
+
+    def assert_upload_job_access(self, job_id: uuid.UUID, *, actor_username: str) -> None:
+        with self.session_factory() as session:
+            self._require_owned_upload_job(session, job_id=job_id, actor_username=actor_username)
 
     def list_reference_sources(self) -> list[ReferenceSource]:
         manifest_path = self.settings.repo_root / "kb" / "manifest.json"
@@ -1237,6 +1559,8 @@ class UploadPipelineService:
         document_id: uuid.UUID,
         selected_source_ids: list[str],
         user_instruction: str | None,
+        actor_username: str,
+        trace_id: str | None = None,
     ) -> ChecklistDraftBootstrapResponse:
         selected_source_ids = [source_id for source_id in selected_source_ids if source_id]
         if not selected_source_ids:
@@ -1248,30 +1572,25 @@ class UploadPipelineService:
             raise HTTPException(status_code=400, detail=f"Unknown reference source ids: {unknown}")
 
         draft_id = uuid.uuid4()
-        project_id = await asyncio.to_thread(self._get_project_id_for_document, document_id)
-        created = await asyncio.to_thread(
+        trace_id = self._normalize_trace_id(trace_id)
+        created_draft_id, project_id = await asyncio.to_thread(
             self._create_checklist_draft_job,
             draft_id,
             document_id,
             selected_source_ids,
             user_instruction.strip() if user_instruction and user_instruction.strip() else None,
+            actor_username,
+            trace_id,
         )
-        await self._schedule_checklist_job(created)
+        await self._schedule_checklist_job(created_draft_id)
         return ChecklistDraftBootstrapResponse(
-            checklist_draft_id=created,
+            checklist_draft_id=created_draft_id,
             document_id=document_id,
             project_id=project_id,
             status="QUEUED",
-            ws_url=f"/v1/checklist-drafts/{created}/events",
-            status_url=f"/v1/checklist-drafts/{created}",
+            ws_url=f"/v1/checklist-drafts/{created_draft_id}/events",
+            status_url=f"/v1/checklist-drafts/{created_draft_id}",
         )
-
-    def _get_project_id_for_document(self, document_id: uuid.UUID) -> uuid.UUID:
-        with self.session_factory() as session:
-            document = session.get(Document, document_id)
-            if document is None:
-                raise HTTPException(status_code=404, detail="Document not found.")
-            return document.project_id
 
     def _create_checklist_draft_job(
         self,
@@ -1279,11 +1598,15 @@ class UploadPipelineService:
         document_id: uuid.UUID,
         selected_source_ids: list[str],
         user_instruction: str | None,
-    ) -> uuid.UUID:
+        actor_username: str,
+        trace_id: str,
+    ) -> tuple[uuid.UUID, uuid.UUID]:
         with self.session_factory() as session:
-            document = session.get(Document, document_id)
-            if document is None:
-                raise HTTPException(status_code=404, detail="Document not found.")
+            project, document = self._require_owned_document(
+                session,
+                document_id=document_id,
+                actor_username=actor_username,
+            )
             if document.parse_status != "COMPLETED" or not document.extracted_text_uri:
                 raise HTTPException(status_code=409, detail="Document parsing must complete before checklist generation.")
 
@@ -1300,9 +1623,25 @@ class UploadPipelineService:
                 user_instruction=user_instruction,
             )
             session.add(job)
+            self._record_audit_event(
+                session,
+                tenant_id=document.tenant_id,
+                event_name="checklist_started",
+                resource_type="checklist_draft",
+                resource_id=str(job.id),
+                trace_id=trace_id,
+                actor_type="USER",
+                actor_id=actor_username,
+                metadata_json={
+                    "project_id": str(project.id),
+                    "document_id": str(document.id),
+                    "checklist_draft_id": str(job.id),
+                    "selected_source_ids": list(selected_source_ids),
+                },
+            )
             self._sync_project_state(session, document.project_id)
             session.commit()
-            return draft_id
+            return draft_id, document.project_id
 
     async def _run_checklist_job(self, draft_id: uuid.UUID) -> None:
         try:
@@ -1325,11 +1664,50 @@ class UploadPipelineService:
                 )
                 fut.result()
 
-            result = await asyncio.to_thread(
-                self._generate_checklist_with_local_artifacts,
-                record,
-                progress_cb,
-            )
+            selected_source_ids = record["selected_source_ids"]
+            
+            chunk_size = 2
+            chunks = [selected_source_ids[i:i + chunk_size] for i in range(0, len(selected_source_ids), chunk_size)]
+            
+            if not chunks:
+                chunks = [[]]
+                
+            tasks = []
+            for chunk in chunks:
+                chunk_record = dict(record)
+                chunk_record["selected_source_ids"] = chunk
+                tasks.append(
+                    asyncio.to_thread(
+                        self._generate_checklist_with_local_artifacts,
+                        chunk_record,
+                        progress_cb if len(chunks) == 1 else None,
+                    )
+                )
+            
+            if len(chunks) > 1:
+                await self._transition_checklist_job(
+                    draft_id,
+                    stage="DRAFTING_CHECKLIST",
+                    message=f"Extracting obligations across {len(chunks)} parallel agents.",
+                )
+
+            results = await asyncio.gather(*tasks)
+            
+            if len(results) == 1:
+                result = results[0]
+            else:
+                await self._transition_checklist_job(
+                    draft_id,
+                    stage="SYNTHESIZING",
+                    message="Merging partial checklists into final draft.",
+                )
+                result = await asyncio.to_thread(
+                    self.checklist_agent.synthesize_drafts,
+                    results,
+                    record["user_instruction"],
+                    progress_cb,
+                )
+
             finalized = await asyncio.to_thread(self._finalize_checklist_success, draft_id, result)
             if not finalized:
                 return
@@ -1463,6 +1841,23 @@ class UploadPipelineService:
                 return False
             job.result_json = result.model_dump(mode="json")
             job.updated_at = utcnow()
+            project = session.get(Project, job.project_id)
+            self._record_audit_event(
+                session,
+                tenant_id=job.tenant_id,
+                event_name="checklist_completed",
+                resource_type="checklist_draft",
+                resource_id=str(job.id),
+                trace_id=str(job.id),
+                metadata_json={
+                    "project_id": str(job.project_id),
+                    "document_id": str(job.document_id),
+                    "checklist_draft_id": str(job.id),
+                    "initiated_by_username": project.owner_username if project is not None else None,
+                    "check_count": len(result.checks),
+                    "confidence": result.meta.confidence,
+                },
+            )
             self._sync_project_state(session, job.project_id)
             session.commit()
             return True
@@ -1482,12 +1877,40 @@ class UploadPipelineService:
             if job.started_at is None:
                 job.started_at = utcnow()
             job.completed_at = utcnow()
+            project = session.get(Project, job.project_id)
+            self._record_audit_event(
+                session,
+                tenant_id=job.tenant_id,
+                event_name="checklist_failed",
+                resource_type="checklist_draft",
+                resource_id=str(job.id),
+                trace_id=str(job.id),
+                metadata_json={
+                    "project_id": str(job.project_id),
+                    "document_id": str(job.document_id),
+                    "checklist_draft_id": str(job.id),
+                    "initiated_by_username": project.owner_username if project is not None else None,
+                    "error_code": job.error_code,
+                },
+            )
             self._sync_project_state(session, job.project_id)
             session.commit()
+        log_event(
+            logging.ERROR,
+            severity="error",
+            event="checklist_failed",
+            checklist_draft_id=str(draft_id),
+            error_code=exc.__class__.__name__,
+            error_message=str(exc),
+            actor_username=project.owner_username if project is not None else None,
+        )
 
-    def _cancel_checklist_draft_sync(self, draft_id: uuid.UUID) -> None:
+    def _cancel_checklist_draft_sync(self, draft_id: uuid.UUID, actor_username: str | None = None, trace_id: str | None = None) -> None:
         with self.session_factory() as session:
-            job = session.get(ChecklistDraftJob, draft_id)
+            if actor_username is not None:
+                _, job, _ = self._require_owned_checklist_job(session, draft_id=draft_id, actor_username=actor_username)
+            else:
+                job = session.get(ChecklistDraftJob, draft_id)
             if job is None:
                 raise HTTPException(status_code=404, detail="Checklist draft job not found.")
             if job.status in {"COMPLETED", "FAILED"}:
@@ -1502,22 +1925,60 @@ class UploadPipelineService:
                 job.started_at = utcnow()
             job.completed_at = utcnow()
             job.updated_at = utcnow()
+            event_actor_type, event_actor_id = self._actor_fields(actor_username)
+            self._record_audit_event(
+                session,
+                tenant_id=job.tenant_id,
+                event_name="checklist_cancelled",
+                resource_type="checklist_draft",
+                resource_id=str(job.id),
+                trace_id=self._normalize_trace_id(trace_id) if trace_id or actor_username else str(job.id),
+                actor_type=event_actor_type,
+                actor_id=event_actor_id,
+                metadata_json={
+                    "project_id": str(job.project_id),
+                    "document_id": str(job.document_id),
+                    "checklist_draft_id": str(job.id),
+                    "initiated_by_username": actor_username,
+                },
+            )
             self._sync_project_state(session, job.project_id)
             session.commit()
 
-    def get_checklist_draft_snapshot(self, draft_id: uuid.UUID) -> ChecklistDraftSnapshot | None:
+    def get_checklist_draft_snapshot(
+        self,
+        draft_id: uuid.UUID,
+        *,
+        actor_username: str | None = None,
+    ) -> ChecklistDraftSnapshot | None:
         with self.session_factory() as session:
-            row = session.execute(
-                select(ChecklistDraftJob, Document)
-                .join(Document, Document.id == ChecklistDraftJob.document_id)
-                .where(ChecklistDraftJob.id == draft_id)
-            ).first()
-            if not row:
-                return None
-            job, doc = row
+            if actor_username is not None:
+                try:
+                    _, job, doc = self._require_owned_checklist_job(session, draft_id=draft_id, actor_username=actor_username)
+                except HTTPException:
+                    return None
+            else:
+                row = session.execute(
+                    select(ChecklistDraftJob, Document)
+                    .join(Document, Document.id == ChecklistDraftJob.document_id)
+                    .where(ChecklistDraftJob.id == draft_id)
+                ).first()
+                if not row:
+                    return None
+                job, doc = row
             return self._build_checklist_snapshot(job, doc)
 
-    def create_review_setup(self, *, document_id: uuid.UUID, selected_source_ids: list[str]) -> ReviewSetupResponse:
+    def assert_checklist_job_access(self, draft_id: uuid.UUID, *, actor_username: str) -> None:
+        with self.session_factory() as session:
+            self._require_owned_checklist_job(session, draft_id=draft_id, actor_username=actor_username)
+
+    def create_review_setup(
+        self,
+        *,
+        document_id: uuid.UUID,
+        selected_source_ids: list[str],
+        actor_username: str,
+    ) -> ReviewSetupResponse:
         if not selected_source_ids:
             raise HTTPException(status_code=400, detail="At least one reference source must be selected.")
 
@@ -1527,9 +1988,11 @@ class UploadPipelineService:
             raise HTTPException(status_code=400, detail=f"Unknown reference source ids: {unknown}")
 
         with self.session_factory() as session:
-            document = session.get(Document, document_id)
-            if document is None:
-                raise HTTPException(status_code=404, detail="Document not found.")
+            _, document = self._require_owned_document(
+                session,
+                document_id=document_id,
+                actor_username=actor_username,
+            )
             tenant_id = document.tenant_id
 
             run = AnalysisRun(
@@ -1565,12 +2028,16 @@ class UploadPipelineService:
                 status=run.status,
             )
 
-    def get_approved_checklist(self, project_id: uuid.UUID) -> ApprovedChecklistResponse | None:
+    def get_approved_checklist(self, project_id: uuid.UUID, *, actor_username: str) -> ApprovedChecklistResponse | None:
         with self.session_factory() as session:
-            tenant = self._ensure_dev_tenant(session)
+            project = self._require_owned_project(
+                session,
+                project_id=project_id,
+                actor_username=actor_username,
+            )
             checklist = session.execute(
                 select(ApprovedChecklist)
-                .where(ApprovedChecklist.project_id == project_id, ApprovedChecklist.tenant_id == tenant.id)
+                .where(ApprovedChecklist.project_id == project_id, ApprovedChecklist.tenant_id == project.tenant_id)
                 .order_by(ApprovedChecklist.created_at.desc())
             ).scalars().first()
             if checklist is None:
@@ -1581,33 +2048,39 @@ class UploadPipelineService:
                 checklist=document,
             )
 
-    def approve_checklist(self, project_id: uuid.UUID, payload: ApproveChecklistRequest) -> ApprovedChecklistResponse:
+    def approve_checklist(
+        self,
+        project_id: uuid.UUID,
+        payload: ApproveChecklistRequest,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> ApprovedChecklistResponse:
         valid_sources = {src.source_id for src in self.list_reference_sources()}
         unknown = [sid for sid in payload.selected_source_ids if sid not in valid_sources]
         if unknown:
             raise HTTPException(status_code=400, detail=f"Unknown reference source ids: {unknown}")
 
         with self.session_factory() as session:
-            tenant = self._ensure_dev_tenant(session)
-            project = session.execute(
-                select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id)
-            ).scalar_one_or_none()
-            if project is None:
-                raise HTTPException(status_code=404, detail="Project not found.")
+            project = self._require_owned_project(
+                session,
+                project_id=project_id,
+                actor_username=actor_username,
+            )
             document = self._latest_document_for_project(session, project_id)
             if document is None:
                 raise HTTPException(status_code=409, detail="Project has no uploaded document.")
             governance = ChecklistGovernance(
-                owner=DEFAULT_APPROVAL_OWNER,
+                owner=actor_username,
                 approval_status=ApprovalStatus.APPROVED,
-                approved_by=DEFAULT_APPROVED_BY,
+                approved_by=actor_username,
                 approved_at=utcnow(),
                 policy_version=payload.version,
                 change_note=payload.change_note,
             )
             checklist = ChecklistDocument(version=payload.version, governance=governance, checks=payload.checks)
             row = ApprovedChecklist(
-                tenant_id=tenant.id,
+                tenant_id=project.tenant_id,
                 project_id=project.id,
                 document_id=document.id,
                 version=checklist.version,
@@ -1620,6 +2093,24 @@ class UploadPipelineService:
                 change_note=governance.change_note,
             )
             session.add(row)
+            session.flush()
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name="checklist_approved",
+                resource_type="approved_checklist",
+                resource_id=str(row.id),
+                trace_id=self._normalize_trace_id(trace_id),
+                actor_type="USER",
+                actor_id=actor_username,
+                metadata_json={
+                    "project_id": str(project.id),
+                    "document_id": str(document.id),
+                    "approved_checklist_id": str(row.id),
+                    "selected_source_ids": list(payload.selected_source_ids),
+                    "check_count": len(payload.checks),
+                },
+            )
             self._sync_project_state(session, project.id)
             session.commit()
             session.refresh(row)
@@ -1628,8 +2119,19 @@ class UploadPipelineService:
                 checklist=checklist,
             )
 
-    async def create_analysis_run(self, payload: CreateAnalysisRunRequest) -> AnalysisRunBootstrapResponse:
-        run_id = await asyncio.to_thread(self._create_analysis_run_sync, payload.project_id)
+    async def create_analysis_run(
+        self,
+        payload: CreateAnalysisRunRequest,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> AnalysisRunBootstrapResponse:
+        run_id = await asyncio.to_thread(
+            self._create_analysis_run_sync,
+            payload.project_id,
+            actor_username,
+            self._normalize_trace_id(trace_id),
+        )
         await self._schedule_analysis_run(run_id)
         snapshot = await asyncio.to_thread(self.get_analysis_run_snapshot, run_id)
         if snapshot is None:
@@ -1640,14 +2142,13 @@ class UploadPipelineService:
             status_url=f"/v1/analysis-runs/{run_id}",
         )
 
-    def _create_analysis_run_sync(self, project_id: uuid.UUID) -> uuid.UUID:
+    def _create_analysis_run_sync(self, project_id: uuid.UUID, actor_username: str, trace_id: str) -> uuid.UUID:
         with self.session_factory() as session:
-            tenant = self._ensure_dev_tenant(session)
-            project = session.execute(
-                select(Project).where(Project.id == project_id, Project.tenant_id == tenant.id)
-            ).scalar_one_or_none()
-            if project is None:
-                raise HTTPException(status_code=404, detail="Project not found.")
+            project = self._require_owned_project(
+                session,
+                project_id=project_id,
+                actor_username=actor_username,
+            )
             document = self._latest_document_for_project(session, project_id)
             if document is None or document.parse_status != "COMPLETED":
                 raise HTTPException(status_code=409, detail="Project document must be parsed before final review.")
@@ -1655,7 +2156,7 @@ class UploadPipelineService:
             if approved is None:
                 raise HTTPException(status_code=409, detail="An approved checklist is required before final review.")
             run = AnalysisRun(
-                tenant_id=tenant.id,
+                tenant_id=project.tenant_id,
                 project_id=project.id,
                 document_id=document.id,
                 status="QUEUED",
@@ -1667,15 +2168,38 @@ class UploadPipelineService:
                 approved_checklist_id=approved.id,
             )
             session.add(run)
+            session.flush()
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name="analysis_started",
+                resource_type="analysis_run",
+                resource_id=str(run.id),
+                trace_id=trace_id,
+                actor_type="USER",
+                actor_id=actor_username,
+                metadata_json={
+                    "project_id": str(project.id),
+                    "document_id": str(document.id),
+                    "analysis_run_id": str(run.id),
+                    "approved_checklist_id": str(approved.id),
+                },
+            )
             self._sync_project_state(session, project.id)
             session.commit()
             return run.id
 
-    def get_analysis_run_snapshot(self, run_id: uuid.UUID) -> AnalysisRunSnapshot | None:
+    def get_analysis_run_snapshot(self, run_id: uuid.UUID, *, actor_username: str | None = None) -> AnalysisRunSnapshot | None:
         with self.session_factory() as session:
-            run = session.get(AnalysisRun, run_id)
-            if run is None:
-                return None
+            if actor_username is not None:
+                try:
+                    _, run = self._require_owned_analysis_run(session, run_id=run_id, actor_username=actor_username)
+                except HTTPException:
+                    return None
+            else:
+                run = session.get(AnalysisRun, run_id)
+                if run is None:
+                    return None
             finding_count = len(
                 session.execute(select(Finding.id).where(Finding.run_id == run.id)).scalars().all()
             )
@@ -1684,11 +2208,9 @@ class UploadPipelineService:
                 finding_count=finding_count,
             )
 
-    def get_analysis_report(self, run_id: uuid.UUID) -> AnalysisRunReportResponse:
+    def get_analysis_report(self, run_id: uuid.UUID, *, actor_username: str) -> AnalysisRunReportResponse:
         with self.session_factory() as session:
-            run = session.get(AnalysisRun, run_id)
-            if run is None:
-                raise HTTPException(status_code=404, detail="Analysis run not found.")
+            _, run = self._require_owned_analysis_run(session, run_id=run_id, actor_username=actor_username)
             report = session.get(AnalysisReport, run_id)
             if report is None:
                 raise HTTPException(status_code=404, detail="Analysis report not found.")
@@ -1719,6 +2241,34 @@ class UploadPipelineService:
                     )
                 )
             return AnalysisRunReportResponse(report=payload, findings=finding_rows)
+
+    def assert_analysis_run_access(self, run_id: uuid.UUID, *, actor_username: str) -> None:
+        with self.session_factory() as session:
+            self._require_owned_analysis_run(session, run_id=run_id, actor_username=actor_username)
+
+    def record_auth_event(
+        self,
+        *,
+        event_name: str,
+        actor_username: str,
+        trace_id: str,
+        metadata_json: dict[str, Any] | None = None,
+    ) -> None:
+        with self.session_factory() as session:
+            tenant = self._ensure_dev_tenant(session)
+            actor_type, actor_id = self._actor_fields(actor_username)
+            self._record_audit_event(
+                session,
+                tenant_id=tenant.id,
+                event_name=event_name,
+                resource_type="auth_session",
+                resource_id=actor_username,
+                trace_id=trace_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                metadata_json=metadata_json,
+            )
+            session.commit()
 
     async def _run_analysis_run(self, run_id: uuid.UUID) -> None:
         started_at = utcnow()
@@ -2007,6 +2557,22 @@ class UploadPipelineService:
             run.message = "Final review complete."
             run.progress_pct = ANALYSIS_STAGE_PROGRESS["COMPLETED"]
             run.stage = "COMPLETED"
+            project = session.get(Project, run.project_id)
+            self._record_audit_event(
+                session,
+                tenant_id=run.tenant_id,
+                event_name="analysis_completed",
+                resource_type="analysis_run",
+                resource_id=str(run.id),
+                trace_id=str(run.id),
+                metadata_json={
+                    "project_id": str(run.project_id),
+                    "document_id": str(run.document_id),
+                    "analysis_run_id": str(run.id),
+                    "initiated_by_username": project.owner_username if project is not None else None,
+                    "finding_count": len(assessments),
+                },
+            )
             self._sync_project_state(session, run.project_id)
             session.commit()
 
@@ -2155,5 +2721,202 @@ class UploadPipelineService:
                 run.started_at = utcnow()
             run.completed_at = utcnow()
             run.latency_ms = int((run.completed_at - run.started_at).total_seconds() * 1000)
+            project = session.get(Project, run.project_id)
+            self._record_audit_event(
+                session,
+                tenant_id=run.tenant_id,
+                event_name="analysis_failed",
+                resource_type="analysis_run",
+                resource_id=str(run.id),
+                trace_id=str(run.id),
+                metadata_json={
+                    "project_id": str(run.project_id),
+                    "document_id": str(run.document_id),
+                    "analysis_run_id": str(run.id),
+                    "initiated_by_username": project.owner_username if project is not None else None,
+                    "error_code": run.error_code,
+                },
+            )
             self._sync_project_state(session, run.project_id)
             session.commit()
+        log_event(
+            logging.ERROR,
+            severity="error",
+            event="analysis_failed",
+            analysis_run_id=str(run_id),
+            error_code=exc.__class__.__name__,
+            error_message=str(exc),
+            actor_username=project.owner_username if project is not None else None,
+        )
+
+    def purge_deleted_projects(self) -> PurgeDeletedProjectsResult:
+        cutoff = utcnow() - timedelta(days=self.settings.deleted_project_retention_days)
+        purged_project_ids: list[uuid.UUID] = []
+        with self.session_factory() as session:
+            projects = session.execute(
+                select(Project)
+                .where(Project.status == "DELETED")
+                .where(Project.deleted_at.is_not(None))
+                .where(Project.deleted_at <= cutoff)
+                .where(Project.purged_at.is_(None))
+                .order_by(Project.deleted_at.asc())
+            ).scalars().all()
+
+            for project in projects:
+                documents = session.execute(
+                    select(Document).where(Document.project_id == project.id)
+                ).scalars().all()
+                document_ids = [document.id for document in documents]
+                artifact_rows = session.execute(
+                    select(DocumentArtifact).where(DocumentArtifact.project_id == project.id)
+                ).scalars().all()
+
+                uris_to_delete = {
+                    artifact.object_uri
+                    for artifact in artifact_rows
+                    if artifact.object_uri
+                }
+                uris_to_delete.update(
+                    uri
+                    for uri in (
+                        document.storage_uri for document in documents
+                    )
+                    if uri
+                )
+                uris_to_delete.update(
+                    uri
+                    for uri in (
+                        document.extracted_text_uri for document in documents
+                    )
+                    if uri
+                )
+
+                for uri in uris_to_delete:
+                    try:
+                        self.storage.delete_uri(uri)
+                    except Exception as exc:
+                        log_event(
+                            logging.ERROR,
+                            severity="error",
+                            event="project_purge_delete_failed",
+                            project_id=str(project.id),
+                            object_uri=uri,
+                            error_code=exc.__class__.__name__,
+                            error_message=str(exc),
+                            actor_username=project.owner_username,
+                        )
+
+                for artifact in artifact_rows:
+                    artifact.active = False
+                    metadata = dict(artifact.metadata_json or {})
+                    metadata["purged_at"] = utcnow().isoformat()
+                    artifact.metadata_json = metadata
+
+                for document in documents:
+                    document.extracted_text_uri = None
+                    document.parse_status = "PURGED"
+                    document.parse_completed_at = None
+
+                session.execute(delete(DocumentChunk).where(DocumentChunk.document_id.in_(document_ids)))
+
+                checklist_jobs = session.execute(
+                    select(ChecklistDraftJob).where(ChecklistDraftJob.project_id == project.id)
+                ).scalars().all()
+                for job in checklist_jobs:
+                    existing_meta = dict(job.result_json.get("meta", {}) if isinstance(job.result_json, dict) else {})
+                    existing_meta["confidence"] = 0.0
+                    existing_meta["open_questions"] = ["Purged after retention window."]
+                    existing_meta["generation_summary"] = "Checklist draft content was purged after the retention window."
+                    job.result_json = {
+                        "version": (job.result_json or {}).get("version", "purged"),
+                        "meta": existing_meta,
+                        "checks": [],
+                    }
+
+                approved_checklists = session.execute(
+                    select(ApprovedChecklist).where(ApprovedChecklist.project_id == project.id)
+                ).scalars().all()
+                for approved in approved_checklists:
+                    governance = {
+                        "owner": approved.owner,
+                        "approval_status": approved.approval_status,
+                        "approved_by": approved.approved_by,
+                        "approved_at": approved.approved_at.isoformat() if approved.approved_at else None,
+                        "policy_version": approved.version,
+                        "change_note": approved.change_note,
+                    }
+                    approved.checklist_json = {
+                        "version": approved.version,
+                        "governance": governance,
+                        "checks": [],
+                    }
+
+                analysis_runs = session.execute(
+                    select(AnalysisRun).where(AnalysisRun.project_id == project.id)
+                ).scalars().all()
+                for run in analysis_runs:
+                    findings = session.execute(
+                        select(Finding).where(Finding.run_id == run.id)
+                    ).scalars().all()
+                    for finding in findings:
+                        finding.assessment_json = {
+                            "check_id": finding.check_id,
+                            "status": "UNKNOWN",
+                            "risk": finding.risk,
+                            "confidence": 0.0,
+                            "evidence_quotes": [],
+                            "kb_citations": [],
+                            "missing_elements": ["Purged after retention window."],
+                            "risk_rationale": "Assessment content was purged after the retention window.",
+                            "abstained": True,
+                            "abstain_reason": "Purged after retention window.",
+                        }
+                        finding.risk_rationale = "Assessment content was purged after the retention window."
+                        finding.abstained = True
+                        finding.abstain_reason = "Purged after retention window."
+
+                    report = session.get(AnalysisReport, run.id)
+                    if report is not None:
+                        report.report_json = {
+                            "run_id": str(run.id),
+                            "model_version": run.model_version,
+                            "policy_version": run.policy_version,
+                            "overall": {
+                                "score": 0,
+                                "risk_level": "HIGH",
+                                "summary": "Review content was purged after the retention window.",
+                            },
+                            "checks": [],
+                            "highlights": ["Purged after retention window."],
+                            "next_actions": ["Re-run the review from a retained source document if needed."],
+                            "confidence": 0.0,
+                            "abstained": True,
+                            "abstain_reason": "Purged after retention window.",
+                            "review_required": True,
+                            "review_state": "PENDING",
+                            "citation_pages": [],
+                            "evidence_span_offsets": [],
+                            "risk_rationale": "Review content was purged after the retention window.",
+                        }
+
+                project.purged_at = utcnow()
+                project.updated_at = utcnow()
+                self._record_audit_event(
+                    session,
+                    tenant_id=project.tenant_id,
+                    event_name="project_purged",
+                    resource_type="project",
+                    resource_id=str(project.id),
+                    trace_id=str(project.id),
+                    metadata_json={
+                        "project_id": str(project.id),
+                        "deleted_at": project.deleted_at.isoformat() if project.deleted_at else None,
+                        "purged_at": project.purged_at.isoformat(),
+                        "document_count": len(documents),
+                        "initiated_by_username": project.owner_username,
+                    },
+                )
+                purged_project_ids.append(project.id)
+
+            session.commit()
+        return PurgeDeletedProjectsResult(purged_project_ids=purged_project_ids)

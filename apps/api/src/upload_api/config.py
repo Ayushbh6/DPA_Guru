@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,22 @@ def _env_first(*names: str) -> str | None:
         if value is not None and value.strip():
             return value.strip()
     return None
+
+
+def _env_list(name: str, default: list[str]) -> tuple[str, ...]:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return tuple(default)
+    stripped = value.strip()
+    if stripped.startswith("["):
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError as exc:  # pragma: no cover - config validation
+            raise RuntimeError(f"{name} must be valid JSON when using array syntax.") from exc
+        if not isinstance(payload, list) or not all(isinstance(item, str) and item.strip() for item in payload):
+            raise RuntimeError(f"{name} JSON value must be an array of non-empty strings.")
+        return tuple(item.strip() for item in payload)
+    return tuple(item.strip() for item in stripped.split(",") if item.strip())
 
 
 @dataclass(frozen=True)
@@ -50,6 +67,14 @@ class Settings:
     dpa_chunk_size: int
     dpa_chunk_overlap: int
     default_dev_tenant_id: uuid.UUID
+    alpha_users_json: str | None
+    alpha_bootstrap_owner_username: str
+    session_secret: str
+    session_cookie_secure: bool
+    session_cookie_domain: str | None
+    app_allowed_origins: tuple[str, ...]
+    alpha_max_total_documents: int
+    deleted_project_retention_days: int
     repo_root: Path
 
 
@@ -63,11 +88,24 @@ def load_settings() -> Settings:
     r2_access_key_id = _env_first("R2_ACCESS_KEY_ID", "ACCESS_KEY_ID")
     r2_secret_access_key = _env_first("R2_SECRET_ACCESS_KEY", "SECRET_ACCESS_KEY")
     r2_endpoint_url = _env_first("R2_ENDPOINT_URL", "S3_API_KEY")
+    default_allowed_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ]
+    app_allowed_origins = _env_list("APP_ALLOWED_ORIGINS", default_allowed_origins)
     default_storage_backend = (
         "r2"
         if all((r2_account_id, r2_bucket, r2_access_key_id, r2_secret_access_key))
         else "local"
     )
+    local_dev_session_secret = "local-dev-session-secret-change-me"
+    session_secret = os.getenv("SESSION_SECRET", local_dev_session_secret).strip()
+    session_cookie_secure_default = not all(
+        origin.startswith(("http://localhost", "http://127.0.0.1")) for origin in app_allowed_origins
+    )
+    default_alpha_users = json.dumps([{"username": "local-dev", "password": "local-dev"}])
 
     if not upload_storage_dir.is_absolute():
         upload_storage_dir = repo_root / upload_storage_dir
@@ -100,5 +138,13 @@ def load_settings() -> Settings:
         dpa_chunk_size=int(os.getenv("DPA_CHUNK_SIZE", "800")),
         dpa_chunk_overlap=int(os.getenv("DPA_CHUNK_OVERLAP", "300")),
         default_dev_tenant_id=uuid.UUID(os.getenv("DEFAULT_DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001")),
+        alpha_users_json=os.getenv("ALPHA_USERS_JSON", default_alpha_users),
+        alpha_bootstrap_owner_username=os.getenv("ALPHA_BOOTSTRAP_OWNER_USERNAME", "local-dev").strip() or "local-dev",
+        session_secret=session_secret,
+        session_cookie_secure=_env_bool("SESSION_COOKIE_SECURE", session_cookie_secure_default),
+        session_cookie_domain=_env_first("SESSION_COOKIE_DOMAIN"),
+        app_allowed_origins=app_allowed_origins,
+        alpha_max_total_documents=int(os.getenv("ALPHA_MAX_TOTAL_DOCUMENTS", "50")),
+        deleted_project_retention_days=int(os.getenv("DELETED_PROJECT_RETENTION_DAYS", "30")),
         repo_root=repo_root,
     )

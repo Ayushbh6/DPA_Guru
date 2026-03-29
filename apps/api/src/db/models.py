@@ -42,6 +42,7 @@ class Project(Base):
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    owner_username: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
@@ -49,6 +50,8 @@ class Project(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()"), server_onupdate=text("now()")
     )
     last_activity_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Document(Base):
@@ -303,4 +306,5 @@ class AuditEvent(Base):
     resource_type: Mapped[str] = mapped_column(String(128), nullable=False)
     resource_id: Mapped[str] = mapped_column(String(128), nullable=False)
     trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB(astext_type=Text()), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))

@@ -322,6 +322,37 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
     );
   }
 
+  if (!detail?.project) {
+    return (
+      <main className="min-h-screen px-6 py-10" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
+        <div
+          className="mx-auto flex min-h-[70vh] max-w-3xl flex-col items-center justify-center border px-8 text-center"
+          style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}
+        >
+          <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'var(--text-3)' }}>
+            Project Access
+          </div>
+          <h1 className="mt-4 text-3xl font-semibold tracking-tight" style={{ color: 'var(--text)' }}>
+            Project not available
+          </h1>
+          <p className="mt-4 max-w-xl text-sm leading-6" style={{ color: 'var(--text-2)' }}>
+            {workspaceError || "This project could not be loaded. It may not exist anymore or you may not have access to it."}
+          </p>
+          <div className="mt-6">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 px-4 py-3 text-sm font-medium"
+              style={{ background: 'var(--invert)', color: 'var(--invert-fg)' }}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Home
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   const tabs = [
     { name: "Dashboard", shortName: "Dashboard", href: `/projects/${projectId}/dashboard` },
     { name: "Setup Checklist", shortName: "Checklist", href: `/projects/${projectId}/checklist` },

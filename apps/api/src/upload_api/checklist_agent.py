@@ -425,6 +425,60 @@ class ChecklistDraftAgent:
 
         return _normalize_check_ids(payload)
 
+    def synthesize_drafts(
+        self,
+        drafts: list[ChecklistDraftOutput],
+        user_instruction: str | None = None,
+        progress_cb: ProgressCallback | None = None,
+    ) -> ChecklistDraftOutput:
+        if not self._settings.gemini_api_key:
+            raise RuntimeError("GEMINI_API_KEY is required for checklist synthesis.")
+
+        if progress_cb:
+            progress_cb("SYNTHESIZING", "Merging and deduplicating final checklist")
+
+        system_instruction = (
+            "You are an expert privacy lawyer and technical auditor. "
+            "Your task is to merge multiple partial data protection checklists into a single, cohesive, "
+            "and deduplicated master checklist.\n"
+            "Combine overlapping or redundant items, ensuring all unique pass/fail criteria and sources "
+            "are preserved. Combine the open questions. Your output must strictly follow the expected JSON schema."
+        )
+
+        contents = [
+            "Please merge the following partial checklists into a single final checklist:",
+            f"User instruction: {(user_instruction or '').strip() or 'None provided'}",
+            "Partial Checklists:"
+        ]
+
+        for i, draft in enumerate(drafts):
+            contents.append(f"--- Partial Checklist {i + 1} ---")
+            contents.append(draft.model_dump_json(indent=2))
+
+        with genai.Client(api_key=self._settings.gemini_api_key) as client:
+            response = client.models.generate_content(
+                model=self._settings.gemini_checklist_model,
+                contents="\n\n".join(contents),
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    response_mime_type="application/json",
+                    response_schema=_gemini_response_schema(),
+                    temperature=0.0,
+                ),
+            )
+
+        if not response.text:
+            raise RuntimeError("Gemini did not return structured output for synthesis.")
+
+        payload = ChecklistDraftOutput.model_validate_json(response.text)
+        
+        all_sources = set()
+        for draft in drafts:
+            all_sources.update(draft.meta.selected_source_ids)
+        payload.meta.selected_source_ids = sorted(list(all_sources))
+        
+        return _normalize_check_ids(payload)
+
     def _load_sources(self, selected_source_ids: list[str]) -> list[SourceRecord]:
         manifest_path = self._settings.repo_root / "kb" / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Outfit } from "next/font/google";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
+import { AuthProvider } from "@/components/AuthProvider";
 
 const outfit = Outfit({
   variable: "--font-outfit",
@@ -28,8 +29,10 @@ export default function RootLayout({
         />
       </head>
       <body className={`${outfit.variable} antialiased`}>
-        <Navbar />
-        {children}
+        <AuthProvider>
+          <Navbar />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

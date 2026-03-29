@@ -39,6 +39,7 @@ ChecklistDraftStage = Literal[
     "EXPANDING_SOURCE_CONTEXT",
     "INSPECTING_DPA",
     "DRAFTING_CHECKLIST",
+    "SYNTHESIZING",
     "VALIDATING_OUTPUT",
     "COMPLETED",
     "FAILED",
@@ -153,6 +154,15 @@ class ProjectDetail(BaseModel):
 
 class CreateProjectRequest(BaseModel):
     name: str | None = Field(default=None, max_length=255)
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=255)
+    password: str = Field(min_length=1, max_length=255)
+
+
+class AuthUserResponse(BaseModel):
+    username: str
 
 
 class CreateProjectResponse(ProjectSummary):

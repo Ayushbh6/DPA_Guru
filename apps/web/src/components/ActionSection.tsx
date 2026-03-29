@@ -7,6 +7,7 @@ import { ArrowUpRight, LoaderCircle, Plus, Search, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { createProject, listProjects, type ProjectSummary } from "@/lib/uploadApi";
+import { useAuth } from "@/components/AuthProvider";
 
 function formatRelativeDate(value: string) {
   const date = new Date(value);
@@ -24,6 +25,7 @@ function statusLabel(status: string) {
 
 export default function ActionSection() {
   const router = useRouter();
+  const { user } = useAuth();
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -49,6 +51,10 @@ export default function ActionSection() {
   }, [createModalOpen]);
 
   async function handleCreate() {
+    if (!user) {
+      router.push("/login");
+      return;
+    }
     if (creating || !newProjectName.trim()) return;
     setCreating(true);
     try {
@@ -62,6 +68,10 @@ export default function ActionSection() {
   }
 
   async function openModal() {
+    if (!user) {
+      router.push("/login");
+      return;
+    }
     setSearch("");
     setModalOpen(true);
     setLoadingProjects(true);

@@ -3,12 +3,17 @@ import { NextRequest } from "next/server";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ documentId: string }> },
 ) {
   const { documentId } = await params;
   const targetUrl = `${API_BASE_URL}/v1/documents/${encodeURIComponent(documentId)}/file`;
-  const upstream = await fetch(targetUrl, { cache: "no-store" });
+  const upstream = await fetch(targetUrl, {
+    cache: "no-store",
+    headers: {
+      cookie: request.headers.get("cookie") || "",
+    },
+  });
 
   if (!upstream.ok || !upstream.body) {
     return new Response(upstream.body, {

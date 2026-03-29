@@ -348,6 +348,20 @@ export type ProjectDetail = {
   analysis_run?: AnalysisRunSummary | null;
 };
 
+export type AuthUserResponse = {
+  username: string;
+};
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 export function getApiBaseUrl() {
   const configuredBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
   if (configuredBaseUrl) return configuredBaseUrl;
@@ -392,13 +406,43 @@ async function parseJson<T>(res: Response): Promise<T> {
     } catch {
       // ignore
     }
-    throw new Error(detail);
+    throw new ApiError(detail, res.status);
   }
   return (await res.json()) as T;
 }
 
+async function apiFetch(input: string, init: RequestInit = {}) {
+  return fetch(input, {
+    ...init,
+    credentials: "include",
+  });
+}
+
+export async function login(username: string, password: string): Promise<AuthUserResponse> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  return parseJson<AuthUserResponse>(res);
+}
+
+export async function logout(): Promise<void> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/auth/logout`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    throw new ApiError("Failed to log out.", res.status);
+  }
+}
+
+export async function getCurrentUser(): Promise<AuthUserResponse> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/auth/me`, { cache: "no-store" });
+  return parseJson<AuthUserResponse>(res);
+}
+
 export async function createProject(name?: string | null): Promise<CreateProjectResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/projects`, {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/projects`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: name?.trim() || null }),
@@ -407,22 +451,22 @@ export async function createProject(name?: string | null): Promise<CreateProject
 }
 
 export async function listProjects(): Promise<ProjectSummary[]> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/projects`, { cache: "no-store" });
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/projects`, { cache: "no-store" });
   return parseJson<ProjectSummary[]>(res);
 }
 
 export async function getProject(projectId: string): Promise<ProjectDetail> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/projects/${projectId}`, { cache: "no-store" });
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/projects/${projectId}`, { cache: "no-store" });
   return parseJson<ProjectDetail>(res);
 }
 
 export async function getDocumentParsedText(documentId: string): Promise<ParsedDocumentTextResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/documents/${documentId}/parsed-text`, { cache: "no-store" });
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/documents/${documentId}/parsed-text`, { cache: "no-store" });
   return parseJson<ParsedDocumentTextResponse>(res);
 }
 
 export async function renameProject(projectId: string, name: string): Promise<ProjectDetail> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/projects/${projectId}`, {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/projects/${projectId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
@@ -431,13 +475,13 @@ export async function renameProject(projectId: string, name: string): Promise<Pr
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/projects/${projectId}`, {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/projects/${projectId}`, {
     method: "DELETE",
     cache: "no-store",
   });
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));
-    throw new Error(errorBody.detail || "Failed to delete project.");
+    throw new ApiError(errorBody.detail || "Failed to delete project.", res.status);
   }
 }
 
@@ -445,7 +489,7 @@ export async function createUpload(file: File, projectId: string): Promise<Uploa
   const form = new FormData();
   form.append("project_id", projectId);
   form.append("file", file);
-  const res = await fetch(`${getApiBaseUrl()}/v1/uploads`, {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/uploads`, {
     method: "POST",
     body: form,
   });
@@ -453,22 +497,22 @@ export async function createUpload(file: File, projectId: string): Promise<Uploa
 }
 
 export async function getUploadStatus(jobId: string): Promise<UploadJobStatus> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/uploads/${jobId}`, { cache: "no-store" });
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/uploads/${jobId}`, { cache: "no-store" });
   return parseJson<UploadJobStatus>(res);
 }
 
 export async function getUploadResult(jobId: string): Promise<UploadJobStatus> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/uploads/${jobId}/result`, { cache: "no-store" });
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/uploads/${jobId}/result`, { cache: "no-store" });
   return parseJson<UploadJobStatus>(res);
 }
 
 export async function listReferenceSources(): Promise<ReferenceSource[]> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/reference-sources`, { cache: "no-store" });
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/reference-sources`, { cache: "no-store" });
   return parseJson<ReferenceSource[]>(res);
 }
 
 export async function createReviewSetup(payload: ReviewSetupPayload): Promise<ReviewSetupResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/review-setup`, {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/review-setup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -477,12 +521,12 @@ export async function createReviewSetup(payload: ReviewSetupPayload): Promise<Re
 }
 
 export async function getApprovedChecklist(projectId: string): Promise<ApprovedChecklistResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/projects/${projectId}/approved-checklist`, { cache: "no-store" });
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/projects/${projectId}/approved-checklist`, { cache: "no-store" });
   return parseJson<ApprovedChecklistResponse>(res);
 }
 
 export async function approveChecklist(projectId: string, payload: ApproveChecklistPayload): Promise<ApprovedChecklistResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/projects/${projectId}/approved-checklist`, {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/projects/${projectId}/approved-checklist`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -491,7 +535,7 @@ export async function approveChecklist(projectId: string, payload: ApproveCheckl
 }
 
 export async function createAnalysisRun(projectId: string): Promise<AnalysisRunBootstrapResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/analysis-runs`, {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/analysis-runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ project_id: projectId }),
@@ -500,17 +544,17 @@ export async function createAnalysisRun(projectId: string): Promise<AnalysisRunB
 }
 
 export async function getAnalysisRunStatus(runId: string): Promise<AnalysisRunStatus> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/analysis-runs/${runId}`, { cache: "no-store" });
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/analysis-runs/${runId}`, { cache: "no-store" });
   return parseJson<AnalysisRunStatus>(res);
 }
 
 export async function getAnalysisReport(runId: string): Promise<AnalysisRunReportResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/analysis-runs/${runId}/report`, { cache: "no-store" });
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/analysis-runs/${runId}/report`, { cache: "no-store" });
   return parseJson<AnalysisRunReportResponse>(res);
 }
 
 export async function createChecklistDraft(payload: ChecklistDraftPayload): Promise<ChecklistDraftBootstrapResponse> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/checklist-drafts`, {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/checklist-drafts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -519,12 +563,12 @@ export async function createChecklistDraft(payload: ChecklistDraftPayload): Prom
 }
 
 export async function getChecklistDraftStatus(draftId: string): Promise<ChecklistDraftStatus> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/checklist-drafts/${draftId}`, { cache: "no-store" });
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/checklist-drafts/${draftId}`, { cache: "no-store" });
   return parseJson<ChecklistDraftStatus>(res);
 }
 
 export async function cancelChecklistDraft(draftId: string): Promise<ChecklistDraftStatus> {
-  const res = await fetch(`${getApiBaseUrl()}/v1/checklist-drafts/${draftId}/cancel`, {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/checklist-drafts/${draftId}/cancel`, {
     method: "POST",
   });
   return parseJson<ChecklistDraftStatus>(res);

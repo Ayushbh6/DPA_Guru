@@ -6,7 +6,7 @@ test_docs/
 .registry_storage/
 kb/
 .future_work/
-
+output/
 # Node.js
 node_modules/
 dist/

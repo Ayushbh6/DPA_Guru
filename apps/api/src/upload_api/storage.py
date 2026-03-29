@@ -94,6 +94,10 @@ class _LocalArtifactBackend:
     def read_json(self, uri: str) -> dict[str, Any]:
         return json.loads(self.read_text(uri))
 
+    def delete_uri(self, uri: str) -> None:
+        path = self.resolve_uri_to_path(uri)
+        path.unlink(missing_ok=True)
+
     def resolve_uri_to_path(self, uri: str) -> Path:
         path = Path(uri).expanduser()
         if path.is_absolute():
@@ -154,6 +158,15 @@ class _R2ArtifactBackend:
 
     def read_json(self, uri: str) -> dict[str, Any]:
         return json.loads(self.read_text(uri))
+
+    def delete_uri(self, uri: str) -> None:
+        bucket, object_key = parse_r2_uri(uri)
+        try:
+            self.client.delete_object(Bucket=bucket, Key=object_key)
+        except Exception as exc:
+            error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            if error_code not in {"NoSuchKey", "404", None}:
+                raise
 
     @property
     def client(self) -> Any:
@@ -272,6 +285,9 @@ class ArtifactStore:
 
     def read_json(self, uri: str) -> dict[str, Any]:
         return self._backend_for_uri(uri).read_json(uri)
+
+    def delete_uri(self, uri: str) -> None:
+        self._backend_for_uri(uri).delete_uri(uri)
 
     @contextmanager
     def local_path_for_processing(self, uri: str, *, suffix: str = ""):

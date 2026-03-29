@@ -4,13 +4,22 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Shield, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useAuth } from "@/components/AuthProvider";
+
+function formatDisplayName(username: string) {
+  if (!username) return "";
+  return username.charAt(0).toUpperCase() + username.slice(1).toLowerCase();
+}
 
 function ThemeToggle() {
-  const [dark, setDark] = useState(() => {
-    if (typeof window === "undefined") return true;
+  const [dark, setDark] = useState(true);
+
+  useEffect(() => {
     const stored = localStorage.getItem("theme");
-    return stored ? stored === "dark" : true;
-  });
+    const isDark = stored ? stored === "dark" : true;
+    setDark(isDark);
+    document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
+  }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
@@ -41,6 +50,7 @@ function ThemeToggle() {
 
 export default function Navbar() {
   const pathname = usePathname();
+  const { user, logoutUser } = useAuth();
 
   if (pathname.startsWith("/projects")) {
     return null;
@@ -68,7 +78,28 @@ export default function Navbar() {
             Merlin AI
           </span>
         </Link>
-        <ThemeToggle />
+        <div className="flex items-center gap-4">
+          {user ? (
+            <>
+              <div className="text-sm" style={{ color: "var(--text-2)" }}>
+                Hi, <span style={{ color: "var(--text)" }}>{formatDisplayName(user.username)}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void logoutUser()}
+                className="text-sm transition-colors"
+                style={{ color: "var(--text-2)" }}
+              >
+                Log out
+              </button>
+            </>
+          ) : (
+            <Link href="/login" className="text-sm transition-colors" style={{ color: "var(--text-2)" }}>
+              Log in
+            </Link>
+          )}
+          <ThemeToggle />
+        </div>
       </div>
     </nav>
   );

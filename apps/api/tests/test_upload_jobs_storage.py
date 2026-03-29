@@ -36,6 +36,14 @@ def _settings(tmp_path: Path) -> Settings:
         dpa_chunk_size=800,
         dpa_chunk_overlap=300,
         default_dev_tenant_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        alpha_users_json='[{"username":"local-dev","password":"local-dev"}]',
+        alpha_bootstrap_owner_username="local-dev",
+        session_secret="local-dev-session-secret-change-me",
+        session_cookie_secure=False,
+        session_cookie_domain=None,
+        app_allowed_origins=("http://localhost:3000",),
+        alpha_max_total_documents=50,
+        deleted_project_retention_days=30,
         repo_root=tmp_path,
     )
 

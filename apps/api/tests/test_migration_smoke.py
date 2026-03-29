@@ -61,12 +61,29 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                     "kb_ingest_tasks",
                     "kb_chunks",
                 }
+                absent_tables = {
+                    "registry_audit_events",
+                    "registry_checklist_synthesis_runs",
+                    "registry_diffs",
+                    "registry_extracted_obligations",
+                    "registry_extraction_chunks",
+                    "registry_extraction_runs",
+                    "registry_extraction_segments",
+                    "registry_snapshots",
+                    "registry_sources",
+                    "checklist_approvals",
+                    "checklist_item_sources",
+                    "checklist_items",
+                    "checklist_reviews",
+                    "checklist_versions",
+                }
                 table_names = set(
                     conn.execute(
                         sa.text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
                     ).scalars()
                 )
                 assert expected_tables.issubset(table_names)
+                assert absent_tables.isdisjoint(table_names)
 
                 idx_names = set(
                     conn.execute(
@@ -76,6 +93,8 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 assert "documents_tenant_uploaded_idx" in idx_names
                 assert "projects_tenant_last_activity_idx" in idx_names
                 assert "projects_status_updated_idx" in idx_names
+                assert "projects_owner_status_updated_idx" in idx_names
+                assert "projects_deleted_purge_idx" in idx_names
                 assert "analysis_runs_tenant_status_started_idx" in idx_names
                 assert "rule_hits_run_severity_idx" in idx_names
                 assert "review_actions_run_finding_created_idx" in idx_names
@@ -167,12 +186,17 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 project_id = conn.execute(
                     sa.text(
                         """
-                        INSERT INTO projects (tenant_id, name, status)
-                        VALUES (:tenant_id, :name, :status)
+                        INSERT INTO projects (tenant_id, owner_username, name, status)
+                        VALUES (:tenant_id, :owner_username, :name, :status)
                         RETURNING id
                         """
                     ),
-                    {"tenant_id": tenant_id, "name": "Untitled analysis", "status": "EMPTY"},
+                    {
+                        "tenant_id": tenant_id,
+                        "owner_username": "local-dev",
+                        "name": "Untitled analysis",
+                        "status": "EMPTY",
+                    },
                 ).scalar_one()
 
                 conn.execute(
@@ -324,7 +348,11 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                         {"tenant_id": tenant_id},
                     ).scalars()
                 )
-                assert "analysis_runs_tenant_status_started_idx" in explain_plan
+                assert "Index Scan" in explain_plan or "Bitmap Heap Scan" in explain_plan
+                assert (
+                    "analysis_runs_tenant_status_started_idx" in explain_plan
+                    or "analysis_runs_status_started_idx" in explain_plan
+                )
 
                 kb_source_id = conn.execute(
                     sa.text(

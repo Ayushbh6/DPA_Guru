@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from pathlib import Path
+
+import pytest
+from fastapi import HTTPException
 
 from upload_api.config import Settings
 from upload_api.events import JobEventBus
 from upload_api.jobs import UploadPipelineService
+from upload_api.parsers import PdfInspection
 from upload_api.storage import ArtifactStore
 
 
@@ -15,6 +20,7 @@ def _settings(tmp_path: Path) -> Settings:
         api_host="0.0.0.0",
         api_port=8001,
         max_upload_mb=50,
+        max_pdf_pages=200,
         document_storage_backend="local",
         upload_storage_dir=tmp_path / "uploads",
         parsed_storage_dir=tmp_path / "parsed",
@@ -42,10 +48,65 @@ def _settings(tmp_path: Path) -> Settings:
         session_cookie_secure=False,
         session_cookie_domain=None,
         app_allowed_origins=("http://localhost:3000",),
+        alpha_max_projects_per_user=20,
+        alpha_max_documents_per_user=8,
+        alpha_max_check_runs_per_user=15,
         alpha_max_total_documents=50,
+        alpha_max_total_active_storage_mb=5000,
+        login_rate_limit_per_ip=20,
+        login_rate_limit_per_username=10,
+        login_rate_limit_window_seconds=300,
+        upload_rate_limit_per_user=10,
+        upload_rate_limit_per_ip=20,
+        upload_rate_limit_window_seconds=600,
+        checklist_rate_limit_per_user=1,
+        checklist_rate_limit_window_seconds=60,
+        analysis_rate_limit_per_user=1,
+        analysis_rate_limit_window_seconds=60,
+        worker_id="test-worker",
+        worker_concurrency=2,
+        worker_poll_interval_seconds=1,
+        worker_lease_duration_seconds=90,
+        worker_heartbeat_interval_seconds=15,
+        worker_retry_backoff_first_seconds=30,
+        worker_retry_backoff_second_seconds=120,
         deleted_project_retention_days=30,
         repo_root=tmp_path,
     )
+
+
+class _ExecuteResult:
+    def __init__(self, scalar_value):
+        self._scalar_value = scalar_value
+
+    def scalar_one_or_none(self):
+        return self._scalar_value
+
+
+class _SessionStub:
+    def __init__(self, *, existing_document=None) -> None:
+        self.existing_document = existing_document
+        self.committed = False
+
+    def execute(self, _statement):
+        return _ExecuteResult(self.existing_document)
+
+    def commit(self) -> None:
+        self.committed = True
+
+
+class _SessionFactoryStub:
+    def __init__(self, session: _SessionStub) -> None:
+        self._session = session
+
+    def __call__(self):
+        return self
+
+    def __enter__(self) -> _SessionStub:
+        return self._session
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
 
 
 def test_load_dpa_pages_falls_back_to_markdown_when_pages_json_missing(tmp_path: Path) -> None:
@@ -83,3 +144,276 @@ def test_load_dpa_pages_falls_back_to_markdown_when_pages_json_missing(tmp_path:
     assert [page.page for page in pages] == [1, 2]
     assert pages[0].text == "Controller instructions apply."
     assert pages[1].text == "Security measures are documented."
+
+
+def test_prepare_upload_context_rejects_per_user_document_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    session = _SessionStub()
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=_SessionFactoryStub(session),  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    project_id = uuid.uuid4()
+    tenant_id = uuid.uuid4()
+    project = type("ProjectStub", (), {"id": project_id, "tenant_id": tenant_id})()
+    audit_events: list[dict[str, object]] = []
+
+    monkeypatch.setattr(service, "_require_owned_project", lambda *args, **kwargs: project)
+    monkeypatch.setattr(
+        service,
+        "_count_documents_for_user_alpha_quota",
+        lambda *_args, **_kwargs: settings.alpha_max_documents_per_user,
+    )
+    monkeypatch.setattr(service, "_count_documents_for_alpha_quota", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(service, "_count_active_artifact_bytes_for_alpha_quota", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(
+        service,
+        "_record_audit_event",
+        lambda _session, **payload: audit_events.append(payload),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        service._prepare_upload_context(project_id, "local-dev", "trace-1", 1024)
+
+    assert exc.value.status_code == 409
+    assert "8 documents" in exc.value.detail
+    assert session.committed is True
+    assert audit_events[0]["event_name"] == "document_upload_quota_denied_per_user"
+
+
+def test_prepare_upload_context_rejects_global_storage_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    session = _SessionStub()
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=_SessionFactoryStub(session),  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    project_id = uuid.uuid4()
+    tenant_id = uuid.uuid4()
+    project = type("ProjectStub", (), {"id": project_id, "tenant_id": tenant_id})()
+    audit_events: list[dict[str, object]] = []
+    max_bytes = settings.alpha_max_total_active_storage_mb * 1024 * 1024
+
+    monkeypatch.setattr(service, "_require_owned_project", lambda *args, **kwargs: project)
+    monkeypatch.setattr(service, "_count_documents_for_user_alpha_quota", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(service, "_count_documents_for_alpha_quota", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(
+        service,
+        "_count_active_artifact_bytes_for_alpha_quota",
+        lambda *_args, **_kwargs: max_bytes - 512,
+    )
+    monkeypatch.setattr(
+        service,
+        "_record_audit_event",
+        lambda _session, **payload: audit_events.append(payload),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        service._prepare_upload_context(project_id, "local-dev", "trace-2", 1024)
+
+    assert exc.value.status_code == 409
+    assert "storage limit" in exc.value.detail.lower()
+    assert session.committed is True
+    assert audit_events[0]["event_name"] == "document_upload_quota_denied_global_storage"
+
+
+def test_enforce_project_alpha_quota_rejects_user_over_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    session = _SessionStub()
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=_SessionFactoryStub(session),  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    audit_events: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        service,
+        "_count_projects_for_user_alpha_quota",
+        lambda *_args, **_kwargs: settings.alpha_max_projects_per_user,
+    )
+    monkeypatch.setattr(
+        service,
+        "_record_audit_event",
+        lambda _session, **payload: audit_events.append(payload),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        service._enforce_project_alpha_quota(
+            session,
+            tenant_id=uuid.uuid4(),
+            actor_username="local-dev",
+            trace_id="trace-project-cap",
+        )
+
+    assert exc.value.status_code == 409
+    assert "20 projects" in exc.value.detail
+    assert session.committed is True
+    assert audit_events[0]["event_name"] == "project_quota_denied_per_user"
+
+
+def test_enforce_check_run_alpha_quota_rejects_user_over_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    session = _SessionStub()
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=_SessionFactoryStub(session),  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    audit_events: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        service,
+        "_count_check_runs_for_user_alpha_quota",
+        lambda *_args, **_kwargs: settings.alpha_max_check_runs_per_user,
+    )
+    monkeypatch.setattr(
+        service,
+        "_record_audit_event",
+        lambda _session, **payload: audit_events.append(payload),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        service._enforce_check_run_alpha_quota(
+            session,
+            tenant_id=uuid.uuid4(),
+            project_id=uuid.uuid4(),
+            document_id=uuid.uuid4(),
+            actor_username="local-dev",
+            trace_id="trace-check-cap",
+            event_name="checklist_quota_denied_per_user",
+            label="checklist",
+        )
+
+    assert exc.value.status_code == 409
+    assert "15 checklist/review runs" in exc.value.detail
+    assert session.committed is True
+    assert audit_events[0]["event_name"] == "checklist_quota_denied_per_user"
+
+
+def test_create_upload_rejects_oversized_file_and_records_audit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=None,  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    audit_events: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        service,
+        "record_upload_policy_event",
+        lambda **payload: audit_events.append(payload),
+    )
+
+    oversized = b"x" * ((settings.max_upload_mb * 1024 * 1024) + 1)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            service.create_upload(
+                project_id=uuid.uuid4(),
+                filename="sample.pdf",
+                mime_type="application/pdf",
+                data=oversized,
+                actor_username="local-dev",
+                trace_id="trace-3",
+            )
+        )
+
+    assert exc.value.status_code == 400
+    assert f"{settings.max_upload_mb}MB" in exc.value.detail
+    assert audit_events[0]["event_name"] == "document_upload_quota_denied_file_size"
+
+
+def test_preflight_pdf_upload_rejects_invalid_pdf_and_records_audit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=None,  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    audit_events: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        service,
+        "record_upload_policy_event",
+        lambda **payload: audit_events.append(payload),
+    )
+    monkeypatch.setattr("upload_api.jobs.inspect_pdf", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad pdf")))
+
+    with pytest.raises(HTTPException) as exc:
+        service._preflight_pdf_upload(uuid.uuid4(), "local-dev", "trace-preflight-invalid", b"%PDF-1.4 broken")
+
+    assert exc.value.status_code == 400
+    assert "non-password-protected PDF" in exc.value.detail
+    assert audit_events[0]["event_name"] == "document_upload_policy_denied_pdf_invalid"
+
+
+def test_preflight_pdf_upload_rejects_pdf_page_cap_and_records_audit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=None,  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    audit_events: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        service,
+        "record_upload_policy_event",
+        lambda **payload: audit_events.append(payload),
+    )
+    monkeypatch.setattr(
+        "upload_api.jobs.inspect_pdf",
+        lambda *_args, **_kwargs: PdfInspection(
+            page_count=settings.max_pdf_pages + 1,
+            sampled_pages=15,
+            text_chars_per_page=[200] * 15,
+            image_only_like_pages=0,
+            median_text_chars=200,
+            classification="native",
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        service._preflight_pdf_upload(uuid.uuid4(), "local-dev", "trace-preflight-pages", b"%PDF-1.4 placeholder")
+
+    assert exc.value.status_code == 400
+    assert f"{settings.max_pdf_pages} pages" in exc.value.detail
+    assert audit_events[0]["event_name"] == "document_upload_policy_denied_pdf_pages"

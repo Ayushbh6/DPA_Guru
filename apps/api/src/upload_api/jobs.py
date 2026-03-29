@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import mimetypes
 import re
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -12,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from db.models import (
@@ -142,6 +144,18 @@ class PurgeDeletedProjectsResult:
     purged_project_ids: list[uuid.UUID]
 
 
+@dataclass(frozen=True)
+class ClaimedJob:
+    job_type: str
+    job_id: uuid.UUID
+    project_id: uuid.UUID
+    attempt_count: int
+
+
+class PermanentJobError(RuntimeError):
+    pass
+
+
 class UploadPipelineService:
     def __init__(
         self,
@@ -155,73 +169,13 @@ class UploadPipelineService:
         self.session_factory = session_factory
         self.storage = storage
         self.event_bus = event_bus
-        self._tasks: dict[uuid.UUID, asyncio.Task] = {}
-        self._checklist_tasks: dict[uuid.UUID, asyncio.Task] = {}
-        self._analysis_tasks: dict[uuid.UUID, asyncio.Task] = {}
-        self._tasks_lock = asyncio.Lock()
         self.checklist_agent = ChecklistDraftAgent(settings)
         self.review_agent = ReviewAgent(settings)
         self.document_indexer = DocumentChunkIndexer(settings, session_factory)
 
     def recover_incomplete_jobs(self) -> None:
-        with self.session_factory() as session:
-            now = utcnow()
-
-            parse_jobs = session.execute(
-                select(DocumentParseJob).where(DocumentParseJob.status.in_(("QUEUED", "RUNNING")))
-            ).scalars().all()
-            for job in parse_jobs:
-                job.status = "FAILED"
-                job.stage = "FAILED"
-                job.progress_pct = STAGE_PROGRESS["FAILED"]
-                job.error_code = "ServiceRestarted"
-                job.error_message = "The service restarted before document processing completed."
-                job.message = "Document processing stopped when the service restarted."
-                if job.started_at is None:
-                    job.started_at = now
-                job.completed_at = now
-                job.updated_at = now
-
-                document = session.get(Document, job.document_id)
-                if document is not None and document.parse_status != "COMPLETED":
-                    document.parse_status = "FAILED"
-
-            checklist_jobs = session.execute(
-                select(ChecklistDraftJob).where(ChecklistDraftJob.status.in_(("QUEUED", "RUNNING")))
-            ).scalars().all()
-            for job in checklist_jobs:
-                job.status = "FAILED"
-                job.stage = "FAILED"
-                job.progress_pct = CHECKLIST_STAGE_PROGRESS["FAILED"]
-                job.error_code = "ServiceRestarted"
-                job.error_message = "The service restarted before checklist generation completed."
-                job.message = "Checklist generation stopped when the service restarted."
-                if job.started_at is None:
-                    job.started_at = now
-                job.completed_at = now
-                job.updated_at = now
-
-            analysis_runs = session.execute(
-                select(AnalysisRun).where(AnalysisRun.status.in_(("QUEUED", "RUNNING")))
-            ).scalars().all()
-            for run in analysis_runs:
-                run.status = "FAILED"
-                run.stage = "FAILED"
-                run.progress_pct = ANALYSIS_STAGE_PROGRESS["FAILED"]
-                run.error_code = "ServiceRestarted"
-                run.error_message = "The service restarted before final review completed."
-                run.message = "Final review stopped when the service restarted."
-                run.completed_at = now
-
-            affected_project_ids = {
-                *[job.project_id for job in parse_jobs],
-                *[job.project_id for job in checklist_jobs],
-                *[run.project_id for run in analysis_runs],
-            }
-            for project_id in affected_project_ids:
-                self._sync_project_state(session, project_id)
-
-            session.commit()
+        # Durable jobs are recovered by the worker via stale-lease requeue.
+        return None
 
     def create_project(
         self,
@@ -232,6 +186,12 @@ class UploadPipelineService:
     ) -> CreateProjectResponse:
         with self.session_factory() as session:
             tenant = self._ensure_dev_tenant(session)
+            self._enforce_project_alpha_quota(
+                session,
+                tenant_id=tenant.id,
+                actor_username=actor_username,
+                trace_id=self._normalize_trace_id(trace_id),
+            )
             now = utcnow()
             project = Project(
                 tenant_id=tenant.id,
@@ -364,19 +324,40 @@ class UploadPipelineService:
         actor_username: str,
         trace_id: str | None = None,
     ) -> UploadBootstrapResponse:
+        trace_id = self._normalize_trace_id(trace_id)
         ext = Path(filename).suffix.lower()
         if ext not in ALLOWED_EXTENSIONS:
             raise HTTPException(status_code=400, detail="Unsupported file type. Only PDF and DOCX are allowed.")
 
         size_limit = self.settings.max_upload_mb * 1024 * 1024
         if len(data) > size_limit:
+            await asyncio.to_thread(
+                self.record_upload_policy_event,
+                project_id=project_id,
+                actor_username=actor_username,
+                trace_id=trace_id,
+                event_name="document_upload_quota_denied_file_size",
+                metadata_json={
+                    "project_id": str(project_id),
+                    "quota_mb": self.settings.max_upload_mb,
+                    "content_length": len(data),
+                    "enforced_via": "body_length",
+                },
+            )
             raise HTTPException(status_code=400, detail=f"File exceeds {self.settings.max_upload_mb}MB limit.")
 
         mime_type = (mime_type or mimetypes.guess_type(filename)[0] or "").strip() or "application/octet-stream"
         file_type = ALLOWED_EXTENSIONS[ext]
+        if file_type == "pdf":
+            await asyncio.to_thread(
+                self._preflight_pdf_upload,
+                project_id,
+                actor_username,
+                trace_id,
+                data,
+            )
         job_id = uuid.uuid4()
-        trace_id = self._normalize_trace_id(trace_id)
-        context = await asyncio.to_thread(self._prepare_upload_context, project_id, actor_username, trace_id)
+        context = await asyncio.to_thread(self._prepare_upload_context, project_id, actor_username, trace_id, len(data))
         upload_artifact = self.storage.save_upload(
             tenant_id=context.tenant_id,
             project_id=context.project_id,
@@ -397,7 +378,6 @@ class UploadPipelineService:
             actor_username,
             trace_id,
         )
-        await self._schedule_job(created.job_id)
 
         return UploadBootstrapResponse(
             job_id=created.job_id,
@@ -408,7 +388,13 @@ class UploadPipelineService:
             status_url=f"/v1/uploads/{created.job_id}",
         )
 
-    def _prepare_upload_context(self, project_id: uuid.UUID, actor_username: str, trace_id: str) -> UploadContext:
+    def _prepare_upload_context(
+        self,
+        project_id: uuid.UUID,
+        actor_username: str,
+        trace_id: str,
+        incoming_file_bytes: int,
+    ) -> UploadContext:
         with self.session_factory() as session:
             project = self._require_owned_project(
                 session,
@@ -420,6 +406,33 @@ class UploadPipelineService:
             ).scalar_one_or_none()
             if existing_document is not None:
                 raise HTTPException(status_code=409, detail="This project already has a document.")
+            current_user_documents = self._count_documents_for_user_alpha_quota(session, actor_username=actor_username)
+            if current_user_documents >= self.settings.alpha_max_documents_per_user:
+                actor_type, actor_id = self._actor_fields(actor_username)
+                self._record_audit_event(
+                    session,
+                    tenant_id=project.tenant_id,
+                    event_name="document_upload_quota_denied_per_user",
+                    resource_type="project",
+                    resource_id=str(project.id),
+                    trace_id=trace_id,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    metadata_json={
+                        "project_id": str(project.id),
+                        "actor_username": actor_username,
+                        "quota": self.settings.alpha_max_documents_per_user,
+                        "current_user_documents": current_user_documents,
+                    },
+                )
+                session.commit()
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This account has reached the private alpha upload cap of "
+                        f"{self.settings.alpha_max_documents_per_user} documents."
+                    ),
+                )
             total_documents = self._count_documents_for_alpha_quota(session)
             if total_documents >= self.settings.alpha_max_total_documents:
                 actor_type, actor_id = self._actor_fields(actor_username)
@@ -446,10 +459,88 @@ class UploadPipelineService:
                         "Please delete older projects or contact the operator to raise the cap."
                     ),
                 )
+            current_active_storage_bytes = self._count_active_artifact_bytes_for_alpha_quota(session)
+            max_active_storage_bytes = self._alpha_max_total_active_storage_bytes()
+            if current_active_storage_bytes + incoming_file_bytes > max_active_storage_bytes:
+                actor_type, actor_id = self._actor_fields(actor_username)
+                self._record_audit_event(
+                    session,
+                    tenant_id=project.tenant_id,
+                    event_name="document_upload_quota_denied_global_storage",
+                    resource_type="project",
+                    resource_id=str(project.id),
+                    trace_id=trace_id,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    metadata_json={
+                        "project_id": str(project.id),
+                        "incoming_file_bytes": incoming_file_bytes,
+                        "current_active_storage_bytes": current_active_storage_bytes,
+                        "projected_active_storage_bytes": current_active_storage_bytes + incoming_file_bytes,
+                        "quota_bytes": max_active_storage_bytes,
+                        "quota_mb": self.settings.alpha_max_total_active_storage_mb,
+                    },
+                )
+                session.commit()
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Global private alpha storage limit reached. "
+                        "Please purge older projects before uploading another document."
+                    ),
+            )
             return UploadContext(
                 tenant_id=project.tenant_id,
                 project_id=project.id,
                 document_id=uuid.uuid4(),
+            )
+
+    def _preflight_pdf_upload(
+        self,
+        project_id: uuid.UUID,
+        actor_username: str,
+        trace_id: str,
+        data: bytes,
+    ) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+            tmp.write(data)
+            tmp.flush()
+            try:
+                inspection = inspect_pdf(Path(tmp.name))
+            except Exception as exc:
+                self.record_upload_policy_event(
+                    project_id=project_id,
+                    actor_username=actor_username,
+                    trace_id=trace_id,
+                    event_name="document_upload_policy_denied_pdf_invalid",
+                    metadata_json={
+                        "project_id": str(project_id),
+                        "error_code": exc.__class__.__name__,
+                        "error_message": str(exc),
+                    },
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail="PDF could not be opened. Please upload a valid, non-password-protected PDF.",
+                ) from exc
+
+        if inspection.page_count > self.settings.max_pdf_pages:
+            self.record_upload_policy_event(
+                project_id=project_id,
+                actor_username=actor_username,
+                trace_id=trace_id,
+                event_name="document_upload_policy_denied_pdf_pages",
+                metadata_json={
+                    "project_id": str(project_id),
+                    "page_count": inspection.page_count,
+                    "quota_pages": self.settings.max_pdf_pages,
+                    "classification": inspection.classification,
+                    "sampled_pages": inspection.sampled_pages,
+                },
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"PDF exceeds the private alpha limit of {self.settings.max_pdf_pages} pages.",
             )
 
     def _create_document_and_job(
@@ -498,6 +589,8 @@ class UploadPipelineService:
                 progress_pct=STAGE_PROGRESS["UPLOADING"],
                 message="Upload received. Queuing background processing.",
                 file_type=file_type,
+                available_at=utcnow(),
+                attempt_count=0,
                 meta_json={"original_filename": filename, "initiated_by_username": actor_username},
             )
             session.add(job)
@@ -667,12 +760,148 @@ class UploadPipelineService:
         return row
 
     def _count_documents_for_alpha_quota(self, session: Session) -> int:
-        return len(
+        return int(
             session.execute(
-                select(Document.id)
+                select(func.count(Document.id))
                 .join(Project, Project.id == Document.project_id)
                 .where(Project.purged_at.is_(None))
-            ).scalars().all()
+            ).scalar_one()
+            or 0
+        )
+
+    def _count_documents_for_user_alpha_quota(self, session: Session, *, actor_username: str) -> int:
+        return int(
+            session.execute(
+                select(func.count(Document.id))
+                .join(Project, Project.id == Document.project_id)
+                .where(Project.owner_username == actor_username)
+                .where(Project.purged_at.is_(None))
+            ).scalar_one()
+            or 0
+        )
+
+    def _count_active_artifact_bytes_for_alpha_quota(self, session: Session) -> int:
+        return int(
+            session.execute(
+                select(func.coalesce(func.sum(DocumentArtifact.byte_size), 0))
+                .join(Project, Project.id == DocumentArtifact.project_id)
+                .where(Project.purged_at.is_(None))
+                .where(DocumentArtifact.active.is_(True))
+            ).scalar_one()
+            or 0
+        )
+
+    def _alpha_max_total_active_storage_bytes(self) -> int:
+        return self.settings.alpha_max_total_active_storage_mb * 1024 * 1024
+
+    def _count_projects_for_user_alpha_quota(self, session: Session, *, actor_username: str) -> int:
+        return int(
+            session.execute(
+                select(func.count(Project.id))
+                .where(Project.owner_username == actor_username)
+                .where(Project.purged_at.is_(None))
+            ).scalar_one()
+            or 0
+        )
+
+    def _count_check_runs_for_user_alpha_quota(self, session: Session, *, actor_username: str) -> int:
+        checklist_count = int(
+            session.execute(
+                select(func.count(ChecklistDraftJob.id))
+                .join(Project, Project.id == ChecklistDraftJob.project_id)
+                .where(Project.owner_username == actor_username)
+                .where(Project.purged_at.is_(None))
+            ).scalar_one()
+            or 0
+        )
+        analysis_count = int(
+            session.execute(
+                select(func.count(AnalysisRun.id))
+                .join(Project, Project.id == AnalysisRun.project_id)
+                .where(Project.owner_username == actor_username)
+                .where(Project.purged_at.is_(None))
+            ).scalar_one()
+            or 0
+        )
+        return checklist_count + analysis_count
+
+    def _enforce_project_alpha_quota(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        actor_username: str,
+        trace_id: str,
+    ) -> None:
+        current_projects = self._count_projects_for_user_alpha_quota(session, actor_username=actor_username)
+        if current_projects < self.settings.alpha_max_projects_per_user:
+            return
+        actor_type, actor_id = self._actor_fields(actor_username)
+        self._record_audit_event(
+            session,
+            tenant_id=tenant_id,
+            event_name="project_quota_denied_per_user",
+            resource_type="project",
+            resource_id=actor_username,
+            trace_id=trace_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            metadata_json={
+                "actor_username": actor_username,
+                "quota": self.settings.alpha_max_projects_per_user,
+                "current_projects": current_projects,
+            },
+        )
+        session.commit()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This account has reached the private alpha cap of "
+                f"{self.settings.alpha_max_projects_per_user} projects."
+            ),
+        )
+
+    def _enforce_check_run_alpha_quota(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        project_id: uuid.UUID,
+        document_id: uuid.UUID,
+        actor_username: str,
+        trace_id: str,
+        event_name: str,
+        label: str,
+    ) -> None:
+        current_runs = self._count_check_runs_for_user_alpha_quota(session, actor_username=actor_username)
+        if current_runs < self.settings.alpha_max_check_runs_per_user:
+            return
+        actor_type, actor_id = self._actor_fields(actor_username)
+        self._record_audit_event(
+            session,
+            tenant_id=tenant_id,
+            event_name=event_name,
+            resource_type="project",
+            resource_id=str(project_id),
+            trace_id=trace_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            metadata_json={
+                "actor_username": actor_username,
+                "project_id": str(project_id),
+                "document_id": str(document_id),
+                "quota": self.settings.alpha_max_check_runs_per_user,
+                "current_runs": current_runs,
+                "label": label,
+            },
+        )
+        session.commit()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This account has reached the private alpha cap of "
+                f"{self.settings.alpha_max_check_runs_per_user} checklist/review runs."
+            ),
         )
 
     def _replace_active_artifact(
@@ -1038,31 +1267,353 @@ class UploadPipelineService:
             session.commit()
             return DocumentParsedTextResult(text=self.storage.read_text(document.extracted_text_uri))
 
-    async def _schedule_job(self, job_id: uuid.UUID) -> None:
-        async with self._tasks_lock:
-            existing = self._tasks.get(job_id)
-            if existing and not existing.done():
+    def claim_next_job(self, *, worker_id: str, job_types: tuple[str, ...] = ("parse", "checklist", "analysis")) -> ClaimedJob | None:
+        with self.session_factory() as session:
+            for job_type in job_types:
+                claimed = self._claim_next_job_sync(session, job_type=job_type, worker_id=worker_id)
+                if claimed is not None:
+                    session.commit()
+                    return claimed
+            session.rollback()
+            return None
+
+    def recover_stale_leases(self) -> int:
+        with self.session_factory() as session:
+            reclaimed = 0
+            reclaimed += self._recover_stale_parse_jobs(session)
+            reclaimed += self._recover_stale_checklist_jobs(session)
+            reclaimed += self._recover_stale_analysis_runs(session)
+            if reclaimed:
+                session.commit()
+            else:
+                session.rollback()
+            return reclaimed
+
+    async def heartbeat_job(self, *, job_type: str, job_id: uuid.UUID, worker_id: str) -> None:
+        await asyncio.to_thread(self._heartbeat_job_sync, job_type, job_id, worker_id)
+
+    async def execute_claimed_job(self, claimed: ClaimedJob, *, worker_id: str) -> None:
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop(claimed, worker_id=worker_id))
+        try:
+            if claimed.job_type == "parse":
+                await self._run_job(claimed.job_id)
+            elif claimed.job_type == "checklist":
+                await self._run_checklist_job(claimed.job_id)
+            elif claimed.job_type == "analysis":
+                await self._run_analysis_run(claimed.job_id)
+            else:  # pragma: no cover - defensive guard
+                raise PermanentJobError(f"Unsupported claimed job type '{claimed.job_type}'.")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            retryable = self._is_retryable_job_exception(exc)
+            await asyncio.to_thread(
+                self._handle_execution_failure_sync,
+                claimed,
+                exc,
+                retryable,
+            )
+            raise
+        finally:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
+
+    async def _heartbeat_loop(self, claimed: ClaimedJob, *, worker_id: str) -> None:
+        while True:
+            await asyncio.sleep(self.settings.worker_heartbeat_interval_seconds)
+            await self.heartbeat_job(job_type=claimed.job_type, job_id=claimed.job_id, worker_id=worker_id)
+
+    def _claim_next_job_sync(self, session: Session, *, job_type: str, worker_id: str) -> ClaimedJob | None:
+        now = utcnow()
+        lease_expires_at = now + timedelta(seconds=self.settings.worker_lease_duration_seconds)
+        model, created_attr = self._job_model(job_type)
+        row = session.execute(
+            select(model)
+            .where(
+                model.status == "QUEUED",
+                model.available_at <= now,
+            )
+            .order_by(model.available_at.asc(), created_attr.asc())
+            .with_for_update(skip_locked=True)
+        ).scalars().first()
+        if row is None:
+            return None
+
+        row.status = "RUNNING"
+        row.claimed_by_worker = worker_id
+        row.claimed_at = now
+        row.heartbeat_at = now
+        row.lease_expires_at = lease_expires_at
+        row.attempt_count = int(getattr(row, "attempt_count", 0) or 0) + 1
+        row.last_error_code = None
+        row.last_error_message = None
+        if job_type == "parse" and row.started_at is None:
+            row.started_at = now
+        if job_type == "checklist":
+            row.updated_at = now
+            if row.started_at is None:
+                row.started_at = now
+        self._record_job_worker_event(
+            session,
+            job_type=job_type,
+            job_id=row.id,
+            tenant_id=row.tenant_id,
+            project_id=row.project_id,
+            document_id=row.document_id,
+            event_name="job_claimed",
+            metadata_json={
+                "worker_id": worker_id,
+                "attempt_count": row.attempt_count,
+                "lease_expires_at": lease_expires_at.isoformat(),
+            },
+        )
+        if job_type == "parse":
+            document = session.get(Document, row.document_id)
+            if document is not None:
+                document.parse_status = "RUNNING"
+        self._sync_project_state(session, row.project_id)
+        return ClaimedJob(
+            job_type=job_type,
+            job_id=row.id,
+            project_id=row.project_id,
+            attempt_count=row.attempt_count,
+        )
+
+    def _recover_stale_parse_jobs(self, session: Session) -> int:
+        stale_jobs = session.execute(
+            select(DocumentParseJob)
+            .where(DocumentParseJob.status == "RUNNING", DocumentParseJob.lease_expires_at.is_not(None), DocumentParseJob.lease_expires_at < utcnow())
+            .with_for_update(skip_locked=True)
+        ).scalars().all()
+        for job in stale_jobs:
+            self._recover_stale_job_row(session, "parse", job)
+        return len(stale_jobs)
+
+    def _recover_stale_checklist_jobs(self, session: Session) -> int:
+        stale_jobs = session.execute(
+            select(ChecklistDraftJob)
+            .where(ChecklistDraftJob.status == "RUNNING", ChecklistDraftJob.lease_expires_at.is_not(None), ChecklistDraftJob.lease_expires_at < utcnow())
+            .with_for_update(skip_locked=True)
+        ).scalars().all()
+        for job in stale_jobs:
+            self._recover_stale_job_row(session, "checklist", job)
+        return len(stale_jobs)
+
+    def _recover_stale_analysis_runs(self, session: Session) -> int:
+        stale_runs = session.execute(
+            select(AnalysisRun)
+            .where(AnalysisRun.status == "RUNNING", AnalysisRun.lease_expires_at.is_not(None), AnalysisRun.lease_expires_at < utcnow())
+            .with_for_update(skip_locked=True)
+        ).scalars().all()
+        for run in stale_runs:
+            self._recover_stale_job_row(session, "analysis", run)
+        return len(stale_runs)
+
+    def _recover_stale_job_row(self, session: Session, job_type: str, row: Any) -> None:
+        self._record_job_worker_event(
+            session,
+            job_type=job_type,
+            job_id=row.id,
+            tenant_id=row.tenant_id,
+            project_id=row.project_id,
+            document_id=row.document_id,
+            event_name="job_heartbeat_stale",
+            metadata_json={
+                "attempt_count": int(getattr(row, "attempt_count", 0) or 0),
+                "claimed_by_worker": getattr(row, "claimed_by_worker", None),
+                "lease_expires_at": row.lease_expires_at.isoformat() if getattr(row, "lease_expires_at", None) else None,
+            },
+        )
+        if int(getattr(row, "attempt_count", 0) or 0) >= self._max_attempts():
+            self._mark_retry_exhausted(session, job_type, row)
+            return
+        self._requeue_job_row(session, job_type, row, reason="Worker lease expired.")
+
+    def _handle_execution_failure_sync(self, claimed: ClaimedJob, exc: Exception, retryable: bool) -> None:
+        with self.session_factory() as session:
+            row = self._get_job_row_for_update(session, claimed.job_type, claimed.job_id)
+            if row is None:
                 return
-            task = asyncio.create_task(self._run_job(job_id))
-            self._tasks[job_id] = task
-            task.add_done_callback(lambda _t, jid=job_id: asyncio.create_task(self._drop_task(jid)))
+            if retryable and int(getattr(row, "attempt_count", 0) or 0) < self._max_attempts():
+                self._requeue_job_row(
+                    session,
+                    claimed.job_type,
+                    row,
+                    reason=str(exc) or exc.__class__.__name__,
+                    error_code=exc.__class__.__name__,
+                    error_message=str(exc),
+                )
+            else:
+                if retryable:
+                    self._mark_retry_exhausted(session, claimed.job_type, row, exc=exc)
+                else:
+                    self._mark_job_failed_terminal(session, claimed.job_type, row.id, exc)
+            session.commit()
 
-    async def _drop_task(self, job_id: uuid.UUID) -> None:
-        async with self._tasks_lock:
-            self._tasks.pop(job_id, None)
-
-    async def _schedule_checklist_job(self, draft_id: uuid.UUID) -> None:
-        async with self._tasks_lock:
-            existing = self._checklist_tasks.get(draft_id)
-            if existing and not existing.done():
+    def _heartbeat_job_sync(self, job_type: str, job_id: uuid.UUID, worker_id: str) -> None:
+        with self.session_factory() as session:
+            row = self._get_job_row_for_update(session, job_type, job_id)
+            if row is None:
                 return
-            task = asyncio.create_task(self._run_checklist_job(draft_id))
-            self._checklist_tasks[draft_id] = task
-            task.add_done_callback(lambda _t, did=draft_id: asyncio.create_task(self._drop_checklist_task(did)))
+            if getattr(row, "claimed_by_worker", None) != worker_id or row.status != "RUNNING":
+                session.rollback()
+                return
+            now = utcnow()
+            row.heartbeat_at = now
+            row.lease_expires_at = now + timedelta(seconds=self.settings.worker_lease_duration_seconds)
+            if job_type in {"parse", "checklist"}:
+                row.updated_at = now
+            session.commit()
 
-    async def _drop_checklist_task(self, draft_id: uuid.UUID) -> None:
-        async with self._tasks_lock:
-            self._checklist_tasks.pop(draft_id, None)
+    def _job_model(self, job_type: str):
+        if job_type == "parse":
+            return DocumentParseJob, DocumentParseJob.created_at
+        if job_type == "checklist":
+            return ChecklistDraftJob, ChecklistDraftJob.created_at
+        if job_type == "analysis":
+            return AnalysisRun, AnalysisRun.started_at
+        raise PermanentJobError(f"Unsupported job type '{job_type}'.")
+
+    def _get_job_row_for_update(self, session: Session, job_type: str, job_id: uuid.UUID):
+        model, _ = self._job_model(job_type)
+        return session.execute(
+            select(model).where(model.id == job_id).with_for_update(skip_locked=True)
+        ).scalars().first()
+
+    def _requeue_job_row(
+        self,
+        session: Session,
+        job_type: str,
+        row: Any,
+        *,
+        reason: str,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        now = utcnow()
+        attempt_count = int(getattr(row, "attempt_count", 0) or 0)
+        backoff_seconds = self._retry_backoff_seconds(attempt_count)
+        row.status = "QUEUED"
+        row.message = "Retrying background job after worker interruption."
+        row.error_code = None
+        row.error_message = None
+        row.last_error_code = error_code
+        row.last_error_message = error_message or reason
+        row.claimed_by_worker = None
+        row.claimed_at = None
+        row.heartbeat_at = None
+        row.lease_expires_at = None
+        row.available_at = now + timedelta(seconds=backoff_seconds)
+        if job_type == "parse":
+            row.stage = "UPLOADING"
+            row.progress_pct = STAGE_PROGRESS["UPLOADING"]
+            row.updated_at = now
+            document = session.get(Document, row.document_id)
+            if document is not None:
+                document.parse_status = "QUEUED"
+        elif job_type == "checklist":
+            row.stage = "QUEUED"
+            row.progress_pct = CHECKLIST_STAGE_PROGRESS["QUEUED"]
+            row.updated_at = now
+        elif job_type == "analysis":
+            row.stage = "QUEUED"
+            row.progress_pct = ANALYSIS_STAGE_PROGRESS["QUEUED"]
+        self._record_job_worker_event(
+            session,
+            job_type=job_type,
+            job_id=row.id,
+            tenant_id=row.tenant_id,
+            project_id=row.project_id,
+            document_id=row.document_id,
+            event_name="job_requeued",
+            metadata_json={
+                "attempt_count": attempt_count,
+                "available_at": row.available_at.isoformat(),
+                "reason": reason,
+                "error_code": error_code,
+            },
+        )
+        self._sync_project_state(session, row.project_id)
+
+    def _mark_retry_exhausted(self, session: Session, job_type: str, row: Any, exc: Exception | None = None) -> None:
+        detail = str(exc) if exc is not None else "Worker lease expired repeatedly."
+        self._record_job_worker_event(
+            session,
+            job_type=job_type,
+            job_id=row.id,
+            tenant_id=row.tenant_id,
+            project_id=row.project_id,
+            document_id=row.document_id,
+            event_name="job_retry_exhausted",
+            metadata_json={
+                "attempt_count": int(getattr(row, "attempt_count", 0) or 0),
+                "error_code": exc.__class__.__name__ if exc is not None else "RetryBudgetExceeded",
+            },
+        )
+        self._mark_job_failed_terminal(
+            session,
+            job_type,
+            row.id,
+            PermanentJobError(detail),
+        )
+
+    def _mark_job_failed_terminal(self, session: Session, job_type: str, job_id: uuid.UUID, exc: Exception) -> None:
+        session.commit()
+        if job_type == "parse":
+            self._mark_failed(job_id, exc)
+        elif job_type == "checklist":
+            self._mark_checklist_failed(job_id, exc)
+        elif job_type == "analysis":
+            self._mark_analysis_failed(job_id, exc)
+        else:  # pragma: no cover - defensive guard
+            raise PermanentJobError(f"Unsupported job type '{job_type}'.")
+
+    def _record_job_worker_event(
+        self,
+        session: Session,
+        *,
+        job_type: str,
+        job_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        project_id: uuid.UUID,
+        document_id: uuid.UUID,
+        event_name: str,
+        metadata_json: dict[str, Any] | None = None,
+    ) -> None:
+        resource_type_map = {
+            "parse": "document_parse_job",
+            "checklist": "checklist_draft",
+            "analysis": "analysis_run",
+        }
+        payload = dict(metadata_json or {})
+        payload.setdefault("project_id", str(project_id))
+        payload.setdefault("document_id", str(document_id))
+        payload.setdefault("job_type", job_type)
+        self._record_audit_event(
+            session,
+            tenant_id=tenant_id,
+            event_name=event_name,
+            resource_type=resource_type_map[job_type],
+            resource_id=str(job_id),
+            trace_id=str(job_id),
+            actor_type="SYSTEM",
+            actor_id="durable-worker",
+            metadata_json=payload,
+        )
+
+    def _is_retryable_job_exception(self, exc: Exception) -> bool:
+        if isinstance(exc, (HTTPException, PermanentJobError)):
+            return False
+        return True
+
+    def _max_attempts(self) -> int:
+        return 3
+
+    def _retry_backoff_seconds(self, attempt_count: int) -> int:
+        if attempt_count <= 1:
+            return self.settings.worker_retry_backoff_first_seconds
+        return self.settings.worker_retry_backoff_second_seconds
 
     async def cancel_checklist_draft(
         self,
@@ -1071,10 +1622,6 @@ class UploadPipelineService:
         actor_username: str,
         trace_id: str | None = None,
     ) -> ChecklistDraftSnapshot:
-        async with self._tasks_lock:
-            task = self._checklist_tasks.get(draft_id)
-            if task and not task.done():
-                task.cancel()
         await asyncio.to_thread(self._cancel_checklist_draft_sync, draft_id, actor_username, self._normalize_trace_id(trace_id))
         snapshot = await asyncio.to_thread(self.get_checklist_draft_snapshot, draft_id, actor_username=actor_username)
         if snapshot is None:
@@ -1082,135 +1629,124 @@ class UploadPipelineService:
         await self.event_bus.publish(draft_id, snapshot.model_dump(mode="json"))
         return snapshot
 
-    async def _schedule_analysis_run(self, run_id: uuid.UUID) -> None:
-        async with self._tasks_lock:
-            existing = self._analysis_tasks.get(run_id)
-            if existing and not existing.done():
-                return
-            task = asyncio.create_task(self._run_analysis_run(run_id))
-            self._analysis_tasks[run_id] = task
-            task.add_done_callback(lambda _t, rid=run_id: asyncio.create_task(self._drop_analysis_task(rid)))
-
-    async def _drop_analysis_task(self, run_id: uuid.UUID) -> None:
-        async with self._tasks_lock:
-            self._analysis_tasks.pop(run_id, None)
-
     async def _run_job(self, job_id: uuid.UUID) -> None:
-        try:
-            await self._transition_job(job_id, status="RUNNING", stage="VALIDATING", message="Validating uploaded file.")
-            job_record = await asyncio.to_thread(self._get_job_record, job_id)
-            if job_record is None:
-                return
-            filename = job_record["filename"]
-            mime_type = job_record["mime_type"]
-            file_type = job_record["file_type"]
-
-            parsed_text: str
-            parsed_format = "markdown"
-            parser_route: str
-            pdf_classification: str | None = None
-            fallback_used = False
-            page_count = job_record["page_count"] or 0
-            parser_meta: dict[str, Any] = {}
-            parsed_pages: list[dict[str, Any]] = []
-            suffix = Path(filename).suffix or ".bin"
-            with self.storage.local_path_for_processing(job_record["document_storage_uri"], suffix=suffix) as file_path:
-                if file_type == "pdf":
-                    await self._transition_job(job_id, stage="CLASSIFYING_PDF", message="Checking whether PDF is native or scanned.")
-                    inspection = await asyncio.to_thread(inspect_pdf, file_path)
-                    pdf_classification = inspection.classification
-                    page_count = inspection.page_count
-                    await self._update_job_details(
-                        job_id,
-                        pdf_classification=pdf_classification,
-                        parser_route="mistral_ocr",
-                        meta_merge={
-                            "pdf_inspection": {
-                                "sampled_pages": inspection.sampled_pages,
-                                "text_chars_per_page": inspection.text_chars_per_page,
-                                "image_only_like_pages": inspection.image_only_like_pages,
-                                "median_text_chars": inspection.median_text_chars,
-                            }
-                        },
-                    )
-                    await self._transition_job(
-                        job_id,
-                        stage="PARSING_MISTRAL_OCR",
-                        message=f"Parsing {pdf_classification} PDF with Mistral OCR ({self.settings.mistral_ocr_model}).",
-                    )
-                    parsed = await self._parse_via_mistral_ocr(job_id, file_path, mime_type)
-                    parsed_text = parsed.text
-                    parsed_format = parsed.text_format
-                    parser_route = parsed.parser_route
-                    page_count = parsed.page_count or page_count
-                    parsed_pages = parsed.pages
-                    parser_meta = parsed.meta
-                elif file_type == "docx":
-                    await self._transition_job(
-                        job_id,
-                        stage="PARSING_MISTRAL_OCR",
-                        message=f"Parsing DOCX with Mistral OCR ({self.settings.mistral_ocr_model}).",
-                    )
-                    parsed = await self._parse_via_mistral_ocr(job_id, file_path, mime_type)
-                    parsed_text = parsed.text
-                    parsed_format = parsed.text_format
-                    parser_route = parsed.parser_route
-                    page_count = parsed.page_count
-                    parsed_pages = parsed.pages
-                    parser_meta = parsed.meta
-                else:
-                    raise RuntimeError(f"Unsupported file_type '{file_type}'")
-
-            await self._transition_job(job_id, stage="COUNTING_TOKENS", message="Estimating token count.")
-            token_count = await asyncio.to_thread(estimate_token_count, parsed_text, self.settings.tokenizer_encoding)
-
-            await self._transition_job(job_id, stage="PERSISTING_RESULTS", message="Saving parsed document artifacts.")
-            parsed_artifact = self.storage.save_parsed_markdown(
-                tenant_id=job_record["tenant_id"],
-                project_id=job_record["project_id"],
-                document_id=job_record["document_id"],
-                text=parsed_text,
-            )
-
-            await self._transition_job(job_id, stage="INDEXING_DOCUMENT", message="Indexing document chunks for final review.")
-            indexed_chunks = await asyncio.to_thread(
-                self._index_document_chunks,
-                job_record["document_id"],
-                parsed_pages,
-            )
-            await self._update_job_details(
-                job_id,
-                meta_merge={"document_chunk_count": indexed_chunks},
-            )
-
-            await asyncio.to_thread(
-                self._finalize_success,
-                job_id,
-                parser_route,
-                pdf_classification,
-                fallback_used,
-                token_count,
-                page_count,
-                parsed_format,
-                parsed_artifact,
-                parser_meta,
-            )
-
+        await self._transition_job(job_id, status="RUNNING", stage="VALIDATING", message="Validating uploaded file.")
+        if await asyncio.to_thread(self._parse_job_can_short_circuit, job_id):
             await self._transition_job(
                 job_id,
                 status="COMPLETED",
                 stage="READY_FOR_REFERENCE_SELECTION",
-                message="Document processed and indexed. Select reference documents to begin review.",
+                message="Document processing already completed. Loaded durable results.",
             )
-        except Exception as exc:
-            await asyncio.to_thread(self._mark_failed, job_id, exc)
-            snapshot = await asyncio.to_thread(self.get_job_snapshot, job_id)
-            if snapshot:
-                await self.event_bus.publish(job_id, snapshot.model_dump(mode="json"))
+            return
+        job_record = await asyncio.to_thread(self._get_job_record, job_id)
+        if job_record is None:
+            return
+        filename = job_record["filename"]
+        mime_type = job_record["mime_type"]
+        file_type = job_record["file_type"]
+
+        parsed_text: str
+        parsed_format = "markdown"
+        parser_route: str
+        pdf_classification: str | None = None
+        fallback_used = False
+        page_count = job_record["page_count"] or 0
+        parser_meta: dict[str, Any] = {}
+        parsed_pages: list[dict[str, Any]] = []
+        suffix = Path(filename).suffix or ".bin"
+        with self.storage.local_path_for_processing(job_record["document_storage_uri"], suffix=suffix) as file_path:
+            if file_type == "pdf":
+                await self._transition_job(job_id, stage="CLASSIFYING_PDF", message="Checking whether PDF is native or scanned.")
+                inspection = await asyncio.to_thread(inspect_pdf, file_path)
+                pdf_classification = inspection.classification
+                page_count = inspection.page_count
+                await self._update_job_details(
+                    job_id,
+                    pdf_classification=pdf_classification,
+                    parser_route="mistral_ocr",
+                    meta_merge={
+                        "pdf_inspection": {
+                            "sampled_pages": inspection.sampled_pages,
+                            "text_chars_per_page": inspection.text_chars_per_page,
+                            "image_only_like_pages": inspection.image_only_like_pages,
+                            "median_text_chars": inspection.median_text_chars,
+                        }
+                    },
+                )
+                await self._transition_job(
+                    job_id,
+                    stage="PARSING_MISTRAL_OCR",
+                    message=f"Parsing {pdf_classification} PDF with Mistral OCR ({self.settings.mistral_ocr_model}).",
+                )
+                parsed = await self._parse_via_mistral_ocr(job_id, file_path, mime_type)
+                parsed_text = parsed.text
+                parsed_format = parsed.text_format
+                parser_route = parsed.parser_route
+                page_count = parsed.page_count or page_count
+                parsed_pages = parsed.pages
+                parser_meta = parsed.meta
+            elif file_type == "docx":
+                await self._transition_job(
+                    job_id,
+                    stage="PARSING_MISTRAL_OCR",
+                    message=f"Parsing DOCX with Mistral OCR ({self.settings.mistral_ocr_model}).",
+                )
+                parsed = await self._parse_via_mistral_ocr(job_id, file_path, mime_type)
+                parsed_text = parsed.text
+                parsed_format = parsed.text_format
+                parser_route = parsed.parser_route
+                page_count = parsed.page_count
+                parsed_pages = parsed.pages
+                parser_meta = parsed.meta
+            else:
+                raise PermanentJobError(f"Unsupported file_type '{file_type}'")
+
+        await self._transition_job(job_id, stage="COUNTING_TOKENS", message="Estimating token count.")
+        token_count = await asyncio.to_thread(estimate_token_count, parsed_text, self.settings.tokenizer_encoding)
+
+        await self._transition_job(job_id, stage="PERSISTING_RESULTS", message="Saving parsed document artifacts.")
+        parsed_artifact = self.storage.save_parsed_markdown(
+            tenant_id=job_record["tenant_id"],
+            project_id=job_record["project_id"],
+            document_id=job_record["document_id"],
+            text=parsed_text,
+        )
+
+        await self._transition_job(job_id, stage="INDEXING_DOCUMENT", message="Indexing document chunks for final review.")
+        indexed_chunks = await asyncio.to_thread(
+            self._index_document_chunks,
+            job_record["document_id"],
+            parsed_pages,
+        )
+        await self._update_job_details(
+            job_id,
+            meta_merge={"document_chunk_count": indexed_chunks},
+        )
+
+        await asyncio.to_thread(
+            self._finalize_success,
+            job_id,
+            parser_route,
+            pdf_classification,
+            fallback_used,
+            token_count,
+            page_count,
+            parsed_format,
+            parsed_artifact,
+            parser_meta,
+        )
+
+        await self._transition_job(
+            job_id,
+            status="COMPLETED",
+            stage="READY_FOR_REFERENCE_SELECTION",
+            message="Document processed and indexed. Select reference documents to begin review.",
+        )
 
     async def _parse_via_mistral_ocr(self, job_id: uuid.UUID, file_path: Path, mime_type: str):
         if not self.settings.mistral_api_key:
-            raise RuntimeError("MISTRAL_API_KEY is required for Mistral OCR fallback/parsing.")
+            raise PermanentJobError("MISTRAL_API_KEY is required for Mistral OCR fallback/parsing.")
 
         async def progress_cb(message: str) -> None:
             await self._touch_job(
@@ -1228,6 +1764,30 @@ class UploadPipelineService:
             include_image_base64=self.settings.mistral_include_image_base64,
             progress_cb=progress_cb,
         )
+
+    def _parse_job_can_short_circuit(self, job_id: uuid.UUID) -> bool:
+        with self.session_factory() as session:
+            row = session.execute(
+                select(DocumentParseJob, Document)
+                .join(Document, Document.id == DocumentParseJob.document_id)
+                .where(DocumentParseJob.id == job_id)
+            ).first()
+            if not row:
+                return False
+            job, document = row
+            if document.parse_status != "COMPLETED" or not document.extracted_text_uri:
+                return False
+            chunk_count = int(
+                session.execute(select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id == document.id)).scalar_one()
+                or 0
+            )
+            return chunk_count > 0 and job.status != "COMPLETED"
+
+    def _clear_worker_lease_state(self, row: Any) -> None:
+        row.claimed_by_worker = None
+        row.claimed_at = None
+        row.heartbeat_at = None
+        row.lease_expires_at = None
 
     def _index_document_chunks(self, document_id: uuid.UUID, parsed_pages: list[dict[str, Any]]) -> int:
         pages = [
@@ -1296,12 +1856,15 @@ class UploadPipelineService:
             job = session.get(DocumentParseJob, job_id)
             if job is None:
                 return
+            if job.status in {"FAILED", "COMPLETED"} and status not in {"FAILED", "COMPLETED"}:
+                return
             if status is not None:
                 job.status = status
                 if status == "RUNNING" and job.started_at is None:
                     job.started_at = utcnow()
                 if status in {"COMPLETED", "FAILED"}:
                     job.completed_at = utcnow()
+                    self._clear_worker_lease_state(job)
             if stage is not None:
                 job.stage = stage
             if progress_pct is not None:
@@ -1465,11 +2028,14 @@ class UploadPipelineService:
             job.progress_pct = STAGE_PROGRESS["FAILED"]
             job.error_code = exc.__class__.__name__
             job.error_message = str(exc)
+            job.last_error_code = job.error_code
+            job.last_error_message = job.error_message
             job.message = "Processing failed."
             job.updated_at = utcnow()
             if job.started_at is None:
                 job.started_at = utcnow()
             job.completed_at = utcnow()
+            self._clear_worker_lease_state(job)
 
             doc = session.get(Document, job.document_id)
             if doc is not None:
@@ -1582,7 +2148,6 @@ class UploadPipelineService:
             actor_username,
             trace_id,
         )
-        await self._schedule_checklist_job(created_draft_id)
         return ChecklistDraftBootstrapResponse(
             checklist_draft_id=created_draft_id,
             document_id=document_id,
@@ -1609,6 +2174,19 @@ class UploadPipelineService:
             )
             if document.parse_status != "COMPLETED" or not document.extracted_text_uri:
                 raise HTTPException(status_code=409, detail="Document parsing must complete before checklist generation.")
+            latest_job = self._latest_checklist_job_for_project(session, project.id)
+            if latest_job is not None and latest_job.status in {"QUEUED", "RUNNING"}:
+                raise HTTPException(status_code=409, detail="Checklist generation is already in progress for this project.")
+            self._enforce_check_run_alpha_quota(
+                session,
+                tenant_id=document.tenant_id,
+                project_id=document.project_id,
+                document_id=document.id,
+                actor_username=actor_username,
+                trace_id=trace_id,
+                event_name="checklist_quota_denied_per_user",
+                label="checklist",
+            )
 
             job = ChecklistDraftJob(
                 id=draft_id,
@@ -1621,6 +2199,8 @@ class UploadPipelineService:
                 message="Starting checklist generation.",
                 selected_source_ids=selected_source_ids,
                 user_instruction=user_instruction,
+                available_at=utcnow(),
+                attempt_count=0,
             )
             session.add(job)
             self._record_audit_event(
@@ -1644,88 +2224,78 @@ class UploadPipelineService:
             return draft_id, document.project_id
 
     async def _run_checklist_job(self, draft_id: uuid.UUID) -> None:
-        try:
+        await self._transition_checklist_job(
+            draft_id,
+            status="RUNNING",
+            stage="RETRIEVING_KB",
+            message="Preparing the selected references.",
+        )
+        record = await asyncio.to_thread(self._get_checklist_job_record, draft_id)
+        if record is None:
+            return
+
+        loop = asyncio.get_running_loop()
+
+        def progress_cb(stage: str, message: str) -> None:
+            fut = asyncio.run_coroutine_threadsafe(
+                self._transition_checklist_job(draft_id, stage=stage, message=message),
+                loop,
+            )
+            fut.result()
+
+        selected_source_ids = record["selected_source_ids"]
+
+        chunk_size = 2
+        chunks = [selected_source_ids[i:i + chunk_size] for i in range(0, len(selected_source_ids), chunk_size)]
+
+        if not chunks:
+            chunks = [[]]
+
+        tasks = []
+        for chunk in chunks:
+            chunk_record = dict(record)
+            chunk_record["selected_source_ids"] = chunk
+            tasks.append(
+                asyncio.to_thread(
+                    self._generate_checklist_with_local_artifacts,
+                    chunk_record,
+                    progress_cb if len(chunks) == 1 else None,
+                )
+            )
+
+        if len(chunks) > 1:
             await self._transition_checklist_job(
                 draft_id,
-                status="RUNNING",
-                stage="RETRIEVING_KB",
-                message="Preparing the selected references.",
+                stage="DRAFTING_CHECKLIST",
+                message=f"Extracting obligations across {len(chunks)} parallel agents.",
             )
-            record = await asyncio.to_thread(self._get_checklist_job_record, draft_id)
-            if record is None:
-                return
 
-            loop = asyncio.get_running_loop()
+        results = await asyncio.gather(*tasks)
 
-            def progress_cb(stage: str, message: str) -> None:
-                fut = asyncio.run_coroutine_threadsafe(
-                    self._transition_checklist_job(draft_id, stage=stage, message=message),
-                    loop,
-                )
-                fut.result()
-
-            selected_source_ids = record["selected_source_ids"]
-            
-            chunk_size = 2
-            chunks = [selected_source_ids[i:i + chunk_size] for i in range(0, len(selected_source_ids), chunk_size)]
-            
-            if not chunks:
-                chunks = [[]]
-                
-            tasks = []
-            for chunk in chunks:
-                chunk_record = dict(record)
-                chunk_record["selected_source_ids"] = chunk
-                tasks.append(
-                    asyncio.to_thread(
-                        self._generate_checklist_with_local_artifacts,
-                        chunk_record,
-                        progress_cb if len(chunks) == 1 else None,
-                    )
-                )
-            
-            if len(chunks) > 1:
-                await self._transition_checklist_job(
-                    draft_id,
-                    stage="DRAFTING_CHECKLIST",
-                    message=f"Extracting obligations across {len(chunks)} parallel agents.",
-                )
-
-            results = await asyncio.gather(*tasks)
-            
-            if len(results) == 1:
-                result = results[0]
-            else:
-                await self._transition_checklist_job(
-                    draft_id,
-                    stage="SYNTHESIZING",
-                    message="Merging partial checklists into final draft.",
-                )
-                result = await asyncio.to_thread(
-                    self.checklist_agent.synthesize_drafts,
-                    results,
-                    record["user_instruction"],
-                    progress_cb,
-                )
-
-            finalized = await asyncio.to_thread(self._finalize_checklist_success, draft_id, result)
-            if not finalized:
-                return
+        if len(results) == 1:
+            result = results[0]
+        else:
             await self._transition_checklist_job(
                 draft_id,
-                status="COMPLETED",
-                stage="COMPLETED",
-                message="Checklist is ready for review.",
+                stage="SYNTHESIZING",
+                message="Merging partial checklists into final draft.",
             )
-        except asyncio.CancelledError:
-            snapshot = await asyncio.to_thread(self.get_checklist_draft_snapshot, draft_id)
-            if snapshot:
-                await self.event_bus.publish(draft_id, snapshot.model_dump(mode="json"))
-        except Exception as exc:
-            await asyncio.to_thread(self._mark_checklist_failed, draft_id, exc)
-            snapshot = await asyncio.to_thread(self.get_checklist_draft_snapshot, draft_id)
-            if snapshot:
-                await self.event_bus.publish(draft_id, snapshot.model_dump(mode="json"))
+            result = await asyncio.to_thread(
+                self.checklist_agent.synthesize_drafts,
+                results,
+                record["user_instruction"],
+                progress_cb,
+            )
+
+        finalized = await asyncio.to_thread(self._finalize_checklist_success, draft_id, result)
+        if not finalized:
+            return
+        await self._transition_checklist_job(
+            draft_id,
+            status="COMPLETED",
+            stage="COMPLETED",
+            message="Checklist is ready for review.",
+        )
 
     def _generate_checklist_with_local_artifacts(
         self,
@@ -1822,6 +2392,7 @@ class UploadPipelineService:
                     job.started_at = utcnow()
                 if status in {"COMPLETED", "FAILED"}:
                     job.completed_at = utcnow()
+                    self._clear_worker_lease_state(job)
             if stage is not None:
                 job.stage = stage
             if progress_pct is not None:
@@ -1872,11 +2443,14 @@ class UploadPipelineService:
             job.progress_pct = CHECKLIST_STAGE_PROGRESS["FAILED"]
             job.error_code = exc.__class__.__name__
             job.error_message = str(exc)
+            job.last_error_code = job.error_code
+            job.last_error_message = job.error_message
             job.message = "Checklist generation failed."
             job.updated_at = utcnow()
             if job.started_at is None:
                 job.started_at = utcnow()
             job.completed_at = utcnow()
+            self._clear_worker_lease_state(job)
             project = session.get(Project, job.project_id)
             self._record_audit_event(
                 session,
@@ -1920,11 +2494,14 @@ class UploadPipelineService:
             job.progress_pct = CHECKLIST_STAGE_PROGRESS["FAILED"]
             job.error_code = "UserCanceled"
             job.error_message = "Checklist generation was stopped by the user."
+            job.last_error_code = job.error_code
+            job.last_error_message = job.error_message
             job.message = "Checklist generation was stopped."
             if job.started_at is None:
                 job.started_at = utcnow()
             job.completed_at = utcnow()
             job.updated_at = utcnow()
+            self._clear_worker_lease_state(job)
             event_actor_type, event_actor_id = self._actor_fields(actor_username)
             self._record_audit_event(
                 session,
@@ -2002,6 +2579,8 @@ class UploadPipelineService:
                 status="QUEUED",
                 model_version="placeholder-upload-setup",
                 policy_version="kb-v1",
+                available_at=utcnow(),
+                attempt_count=0,
             )
             session.add(run)
             session.flush()
@@ -2132,7 +2711,6 @@ class UploadPipelineService:
             actor_username,
             self._normalize_trace_id(trace_id),
         )
-        await self._schedule_analysis_run(run_id)
         snapshot = await asyncio.to_thread(self.get_analysis_run_snapshot, run_id)
         if snapshot is None:
             raise HTTPException(status_code=500, detail="Failed to load analysis run.")
@@ -2149,12 +2727,25 @@ class UploadPipelineService:
                 project_id=project_id,
                 actor_username=actor_username,
             )
+            latest_run = self._latest_analysis_run_for_project(session, project.id)
+            if latest_run is not None and latest_run.status in {"QUEUED", "RUNNING"}:
+                raise HTTPException(status_code=409, detail="Final review is already running for this project.")
             document = self._latest_document_for_project(session, project_id)
             if document is None or document.parse_status != "COMPLETED":
                 raise HTTPException(status_code=409, detail="Project document must be parsed before final review.")
             approved = self._latest_approved_checklist_for_project(session, project_id)
             if approved is None:
                 raise HTTPException(status_code=409, detail="An approved checklist is required before final review.")
+            self._enforce_check_run_alpha_quota(
+                session,
+                tenant_id=project.tenant_id,
+                project_id=project.id,
+                document_id=document.id,
+                actor_username=actor_username,
+                trace_id=trace_id,
+                event_name="analysis_quota_denied_per_user",
+                label="analysis",
+            )
             run = AnalysisRun(
                 tenant_id=project.tenant_id,
                 project_id=project.id,
@@ -2166,6 +2757,8 @@ class UploadPipelineService:
                 progress_pct=ANALYSIS_STAGE_PROGRESS["QUEUED"],
                 message="Final review queued.",
                 approved_checklist_id=approved.id,
+                available_at=utcnow(),
+                attempt_count=0,
             )
             session.add(run)
             session.flush()
@@ -2270,118 +2863,205 @@ class UploadPipelineService:
             )
             session.commit()
 
+    def record_upload_policy_event(
+        self,
+        *,
+        project_id: uuid.UUID,
+        actor_username: str,
+        trace_id: str,
+        event_name: str,
+        metadata_json: dict[str, Any] | None = None,
+    ) -> None:
+        with self.session_factory() as session:
+            project = self._require_owned_project(
+                session,
+                project_id=project_id,
+                actor_username=actor_username,
+                include_deleted=True,
+            )
+            actor_type, actor_id = self._actor_fields(actor_username)
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name=event_name,
+                resource_type="project",
+                resource_id=str(project.id),
+                trace_id=trace_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                metadata_json=metadata_json,
+            )
+            session.commit()
+
+    def record_project_policy_event(
+        self,
+        *,
+        project_id: uuid.UUID,
+        actor_username: str,
+        trace_id: str,
+        event_name: str,
+        metadata_json: dict[str, Any] | None = None,
+    ) -> None:
+        with self.session_factory() as session:
+            project = self._require_owned_project(
+                session,
+                project_id=project_id,
+                actor_username=actor_username,
+                include_deleted=True,
+            )
+            actor_type, actor_id = self._actor_fields(actor_username)
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name=event_name,
+                resource_type="project",
+                resource_id=str(project.id),
+                trace_id=trace_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                metadata_json=metadata_json,
+            )
+            session.commit()
+
+    def record_document_policy_event(
+        self,
+        *,
+        document_id: uuid.UUID,
+        actor_username: str,
+        trace_id: str,
+        event_name: str,
+        metadata_json: dict[str, Any] | None = None,
+    ) -> None:
+        with self.session_factory() as session:
+            project, document = self._require_owned_document(
+                session,
+                document_id=document_id,
+                actor_username=actor_username,
+                include_deleted=True,
+            )
+            actor_type, actor_id = self._actor_fields(actor_username)
+            payload = dict(metadata_json or {})
+            payload.setdefault("project_id", str(project.id))
+            payload.setdefault("document_id", str(document.id))
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name=event_name,
+                resource_type="document",
+                resource_id=str(document.id),
+                trace_id=trace_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                metadata_json=payload,
+            )
+            session.commit()
+
     async def _run_analysis_run(self, run_id: uuid.UUID) -> None:
         started_at = utcnow()
-        try:
+        await self._transition_analysis_run(
+            run_id,
+            status="RUNNING",
+            stage="PREFETCHING_EVIDENCE",
+            message="Loading approved checklist and preparing evidence.",
+        )
+        record = await asyncio.to_thread(self._get_analysis_run_record, run_id)
+        if record is None:
+            return
+
+        approved_checklist = record["approved_checklist"]
+        dpa_pages = record["dpa_pages"]
+        if not record["chunk_count"]:
+            raise PermanentJobError("Document index is missing. Re-parse the document to regenerate chunks.")
+
+        checks = approved_checklist.checks
+        total_checks = len(checks)
+        concurrency = min(6, total_checks or 1)
+        prefetch_count = 0
+        completed_checks = 0
+        prefetch_semaphore = asyncio.Semaphore(concurrency)
+        review_semaphore = asyncio.Semaphore(concurrency)
+
+        async def prefetch_one(check):
+            nonlocal prefetch_count
+            async with prefetch_semaphore:
+                evidence = await asyncio.to_thread(
+                    self.review_agent.prefetch_evidence,
+                    document_id=record["document_id"],
+                    query=self._build_check_query(check),
+                    sources=record["sources"],
+                    dpa_pages=dpa_pages,
+                    kb_top_k=4,
+                    dpa_top_k=6,
+                )
+            prefetch_count += 1
+            progress = 18 + int((prefetch_count / max(total_checks, 1)) * 18)
             await self._transition_analysis_run(
                 run_id,
-                status="RUNNING",
                 stage="PREFETCHING_EVIDENCE",
-                message="Loading approved checklist and preparing evidence.",
+                message=f"Prepared evidence for {prefetch_count}/{total_checks} checklist items.",
+                progress_pct=progress,
             )
-            record = await asyncio.to_thread(self._get_analysis_run_record, run_id)
-            if record is None:
-                return
+            return evidence
 
-            approved_checklist = record["approved_checklist"]
-            dpa_pages = record["dpa_pages"]
-            if not record["chunk_count"]:
-                raise RuntimeError("Document index is missing. Re-parse the document to regenerate chunks.")
+        prefetched_evidence = await asyncio.gather(*(prefetch_one(check) for check in checks))
 
-            checks = approved_checklist.checks
-            total_checks = len(checks)
-            concurrency = min(6, total_checks or 1)
-            prefetch_count = 0
-            completed_checks = 0
-            prefetch_semaphore = asyncio.Semaphore(concurrency)
-            review_semaphore = asyncio.Semaphore(concurrency)
-
-            async def prefetch_one(check):
-                nonlocal prefetch_count
-                async with prefetch_semaphore:
-                    evidence = await asyncio.to_thread(
-                        self.review_agent.prefetch_evidence,
-                        document_id=record["document_id"],
-                        query=self._build_check_query(check),
-                        sources=record["sources"],
-                        dpa_pages=dpa_pages,
-                        kb_top_k=4,
-                        dpa_top_k=6,
-                    )
-                prefetch_count += 1
-                progress = 18 + int((prefetch_count / max(total_checks, 1)) * 18)
-                await self._transition_analysis_run(
-                    run_id,
-                    stage="PREFETCHING_EVIDENCE",
-                    message=f"Prepared evidence for {prefetch_count}/{total_checks} checklist items.",
-                    progress_pct=progress,
-                )
-                return evidence
-
-            prefetched_evidence = await asyncio.gather(*(prefetch_one(check) for check in checks))
-
-            async def review_one(index: int, check) -> CheckAssessmentOutput:
-                nonlocal completed_checks
-                async with review_semaphore:
-                    result = await asyncio.to_thread(
-                        self._review_single_check_with_retry,
-                        record["document_id"],
-                        approved_checklist,
-                        check,
-                        record["sources"],
-                        dpa_pages,
-                        prefetched_evidence[index],
-                    )
-                await asyncio.to_thread(
-                    self._persist_partial_assessment,
-                    run_id,
+        async def review_one(index: int, check) -> CheckAssessmentOutput:
+            nonlocal completed_checks
+            async with review_semaphore:
+                result = await asyncio.to_thread(
+                    self._review_single_check_with_retry,
+                    record["document_id"],
                     approved_checklist,
-                    result,
+                    check,
+                    record["sources"],
                     dpa_pages,
+                    prefetched_evidence[index],
                 )
-                completed_checks += 1
-                progress = 36 + int((completed_checks / max(total_checks, 1)) * 46)
-                finding_count = await asyncio.to_thread(self._count_findings_for_run, run_id)
-                await self._transition_analysis_run(
-                    run_id,
-                    stage="REVIEWING_CHECKS",
-                    message=f"Reviewed {completed_checks}/{total_checks} checklist items. Saved {finding_count} findings.",
-                    progress_pct=progress,
-                )
-                return result
-
-            assessments = await asyncio.gather(*(review_one(index, check) for index, check in enumerate(checks)))
-
-            await self._transition_analysis_run(
-                run_id,
-                stage="SYNTHESIZING",
-                message="Synthesizing final review report.",
-            )
-            synthesis = await asyncio.to_thread(
-                self._synthesize_with_retry,
-                approved_checklist,
-                assessments,
-            )
             await asyncio.to_thread(
-                self._persist_analysis_result,
+                self._persist_partial_assessment,
                 run_id,
                 approved_checklist,
-                assessments,
-                synthesis,
+                result,
                 dpa_pages,
-                started_at,
             )
+            completed_checks += 1
+            progress = 36 + int((completed_checks / max(total_checks, 1)) * 46)
+            finding_count = await asyncio.to_thread(self._count_findings_for_run, run_id)
             await self._transition_analysis_run(
                 run_id,
-                status="COMPLETED",
-                stage="COMPLETED",
-                message="Final review complete.",
+                stage="REVIEWING_CHECKS",
+                message=f"Reviewed {completed_checks}/{total_checks} checklist items. Saved {finding_count} findings.",
+                progress_pct=progress,
             )
-        except Exception as exc:
-            await asyncio.to_thread(self._mark_analysis_failed, run_id, exc)
-            snapshot = await asyncio.to_thread(self.get_analysis_run_snapshot, run_id)
-            if snapshot:
-                await self.event_bus.publish(run_id, snapshot.model_dump(mode="json"))
+            return result
+
+        assessments = await asyncio.gather(*(review_one(index, check) for index, check in enumerate(checks)))
+
+        await self._transition_analysis_run(
+            run_id,
+            stage="SYNTHESIZING",
+            message="Synthesizing final review report.",
+        )
+        synthesis = await asyncio.to_thread(
+            self._synthesize_with_retry,
+            approved_checklist,
+            assessments,
+        )
+        await asyncio.to_thread(
+            self._persist_analysis_result,
+            run_id,
+            approved_checklist,
+            assessments,
+            synthesis,
+            dpa_pages,
+            started_at,
+        )
+        await self._transition_analysis_run(
+            run_id,
+            status="COMPLETED",
+            stage="COMPLETED",
+            message="Final review complete.",
+        )
 
     def _get_analysis_run_record(self, run_id: uuid.UUID) -> dict[str, Any] | None:
         with self.session_factory() as session:
@@ -2390,10 +3070,10 @@ class UploadPipelineService:
                 return None
             document = session.get(Document, run.document_id)
             if document is None:
-                raise RuntimeError("Document not found for analysis run.")
+                raise PermanentJobError("Document not found for analysis run.")
             approved = session.get(ApprovedChecklist, run.approved_checklist_id)
             if approved is None:
-                raise RuntimeError("Approved checklist not found for analysis run.")
+                raise PermanentJobError("Approved checklist not found for analysis run.")
             parse_job = session.execute(
                 select(DocumentParseJob)
                 .where(DocumentParseJob.document_id == document.id)
@@ -2692,12 +3372,15 @@ class UploadPipelineService:
             run = session.get(AnalysisRun, run_id)
             if run is None:
                 return
+            if run.status in {"FAILED", "COMPLETED"} and status not in {"FAILED", "COMPLETED"}:
+                return
             if status is not None:
                 run.status = status
                 if status == "RUNNING" and run.started_at is None:
                     run.started_at = utcnow()
                 if status in {"COMPLETED", "FAILED"}:
                     run.completed_at = utcnow()
+                    self._clear_worker_lease_state(run)
             if stage is not None:
                 run.stage = stage
             run.progress_pct = progress_pct
@@ -2716,11 +3399,14 @@ class UploadPipelineService:
             run.progress_pct = ANALYSIS_STAGE_PROGRESS["FAILED"]
             run.error_code = exc.__class__.__name__
             run.error_message = str(exc)
+            run.last_error_code = run.error_code
+            run.last_error_message = run.error_message
             run.message = "Final review failed."
             if run.started_at is None:
                 run.started_at = utcnow()
             run.completed_at = utcnow()
             run.latency_ms = int((run.completed_at - run.started_at).total_seconds() * 1000)
+            self._clear_worker_lease_state(run)
             project = session.get(Project, run.project_id)
             self._record_audit_event(
                 session,

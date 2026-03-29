@@ -16,6 +16,7 @@ from .db import build_session_factory
 from .events import JobEventBus
 from .jobs import UploadPipelineService
 from .logging_utils import configure_logging, log_event
+from .rate_limits import InMemoryRateLimiter
 from .schemas import (
     ApproveChecklistRequest,
     AuthUserResponse,
@@ -42,6 +43,7 @@ service = UploadPipelineService(
     storage=storage,
     event_bus=event_bus,
 )
+rate_limiter = InMemoryRateLimiter()
 
 
 def create_app() -> FastAPI:
@@ -102,15 +104,51 @@ def create_app() -> FastAPI:
         )
         return response
 
-    @app.on_event("startup")
-    async def recover_incomplete_jobs() -> None:
-        await asyncio.to_thread(service.recover_incomplete_jobs)
-
     def request_id_for(request: Request) -> str:
         return getattr(request.state, "request_id", str(uuid.uuid4()))
 
     def require_actor(request: Request):
         return auth_manager.get_required_actor_from_request(request)
+
+    def request_ip(request: Request) -> str:
+        return request.client.host if request.client else "unknown"
+
+    async def enforce_rate_limit(
+        *,
+        bucket: str,
+        subject: str,
+        limit: int,
+        window_seconds: int,
+        request: Request,
+        actor_username: str | None,
+        detail: str,
+        audit_callback=None,
+    ) -> None:
+        result = rate_limiter.check(
+            bucket=bucket,
+            subject=subject,
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+        if result.allowed:
+            return
+        if audit_callback is not None:
+            await audit_callback(result.retry_after_seconds)
+        log_event(
+            logging.WARNING,
+            severity="warning",
+            event="rate_limit_denied",
+            request_id=request_id_for(request),
+            bucket=bucket,
+            subject=subject,
+            actor_username=actor_username,
+            remote_ip=request_ip(request),
+            retry_after_seconds=result.retry_after_seconds,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"{detail} Retry in about {result.retry_after_seconds} seconds.",
+        )
 
     async def reject_websocket(websocket: WebSocket, code: int) -> None:
         await websocket.accept()
@@ -124,21 +162,65 @@ def create_app() -> FastAPI:
     async def login(payload: LoginRequest, request: Request, response: Response):
         auth_manager.require_request_origin(request)
         trace_id = request_id_for(request)
+        username = payload.username.strip()
+        remote_ip = request_ip(request)
+        await enforce_rate_limit(
+            bucket="auth_login_ip",
+            subject=remote_ip,
+            limit=settings.login_rate_limit_per_ip,
+            window_seconds=settings.login_rate_limit_window_seconds,
+            request=request,
+            actor_username=username or None,
+            detail="Too many login attempts from this IP.",
+            audit_callback=lambda retry_after: asyncio.to_thread(
+                service.record_auth_event,
+                event_name="auth_login_rate_limited",
+                actor_username=username or remote_ip,
+                trace_id=trace_id,
+                metadata_json={
+                    "username": username,
+                    "remote_ip": remote_ip,
+                    "bucket": "ip",
+                    "retry_after_seconds": retry_after,
+                },
+            ),
+        )
+        await enforce_rate_limit(
+            bucket="auth_login_username",
+            subject=username.lower() or remote_ip,
+            limit=settings.login_rate_limit_per_username,
+            window_seconds=settings.login_rate_limit_window_seconds,
+            request=request,
+            actor_username=username or None,
+            detail="Too many login attempts for this username.",
+            audit_callback=lambda retry_after: asyncio.to_thread(
+                service.record_auth_event,
+                event_name="auth_login_rate_limited",
+                actor_username=username or remote_ip,
+                trace_id=trace_id,
+                metadata_json={
+                    "username": username,
+                    "remote_ip": remote_ip,
+                    "bucket": "username",
+                    "retry_after_seconds": retry_after,
+                },
+            ),
+        )
         actor = auth_manager.authenticate(payload.username, payload.password)
         if actor is None:
             await asyncio.to_thread(
                 service.record_auth_event,
                 event_name="auth_login_failed",
-                actor_username=payload.username.strip(),
+                actor_username=username,
                 trace_id=trace_id,
-                metadata_json={"username": payload.username.strip()},
+                metadata_json={"username": username, "remote_ip": remote_ip},
             )
             log_event(
                 logging.WARNING,
                 severity="warning",
                 event="auth_login_failed",
                 request_id=trace_id,
-                actor_username=payload.username.strip(),
+                actor_username=username,
             )
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password.")
 
@@ -262,8 +344,75 @@ def create_app() -> FastAPI:
     async def create_upload(request: Request, project_id: uuid.UUID = Form(...), file: UploadFile = File(...)):
         auth_manager.require_request_origin(request)
         actor = require_actor(request)
+        remote_ip = request_ip(request)
+        await enforce_rate_limit(
+            bucket="upload_user",
+            subject=actor.username,
+            limit=settings.upload_rate_limit_per_user,
+            window_seconds=settings.upload_rate_limit_window_seconds,
+            request=request,
+            actor_username=actor.username,
+            detail="Upload rate limit reached for this account.",
+            audit_callback=lambda retry_after: asyncio.to_thread(
+                service.record_project_policy_event,
+                project_id=project_id,
+                actor_username=actor.username,
+                trace_id=request_id_for(request),
+                event_name="document_upload_rate_limited",
+                metadata_json={
+                    "project_id": str(project_id),
+                    "bucket": "user",
+                    "remote_ip": remote_ip,
+                    "retry_after_seconds": retry_after,
+                },
+            ),
+        )
+        await enforce_rate_limit(
+            bucket="upload_ip",
+            subject=remote_ip,
+            limit=settings.upload_rate_limit_per_ip,
+            window_seconds=settings.upload_rate_limit_window_seconds,
+            request=request,
+            actor_username=actor.username,
+            detail="Upload rate limit reached from this IP.",
+            audit_callback=lambda retry_after: asyncio.to_thread(
+                service.record_project_policy_event,
+                project_id=project_id,
+                actor_username=actor.username,
+                trace_id=request_id_for(request),
+                event_name="document_upload_rate_limited",
+                metadata_json={
+                    "project_id": str(project_id),
+                    "bucket": "ip",
+                    "remote_ip": remote_ip,
+                    "retry_after_seconds": retry_after,
+                },
+            ),
+        )
         if not file.filename:
             raise HTTPException(status_code=400, detail="Filename is required.")
+        content_length_header = request.headers.get("content-length")
+        if content_length_header:
+            try:
+                content_length = int(content_length_header)
+            except ValueError:
+                content_length = None
+            size_limit = settings.max_upload_mb * 1024 * 1024
+            if content_length is not None and content_length > size_limit:
+                await asyncio.to_thread(
+                    service.record_upload_policy_event,
+                    project_id=project_id,
+                    actor_username=actor.username,
+                    trace_id=request_id_for(request),
+                    event_name="document_upload_quota_denied_file_size",
+                    metadata_json={
+                        "project_id": str(project_id),
+                        "quota_mb": settings.max_upload_mb,
+                        "content_length": content_length,
+                        "enforced_via": "content_length_header",
+                    },
+                )
+                raise HTTPException(status_code=400, detail=f"File exceeds {settings.max_upload_mb}MB limit.")
         data = await file.read()
         return await service.create_upload(
             project_id=project_id,
@@ -331,6 +480,26 @@ def create_app() -> FastAPI:
     async def create_checklist_draft(payload: ChecklistDraftRequest, request: Request):
         auth_manager.require_request_origin(request)
         actor = require_actor(request)
+        await enforce_rate_limit(
+            bucket="checklist_user",
+            subject=actor.username,
+            limit=settings.checklist_rate_limit_per_user,
+            window_seconds=settings.checklist_rate_limit_window_seconds,
+            request=request,
+            actor_username=actor.username,
+            detail="Checklist generation is rate limited for this account.",
+            audit_callback=lambda retry_after: asyncio.to_thread(
+                service.record_document_policy_event,
+                document_id=payload.document_id,
+                actor_username=actor.username,
+                trace_id=request_id_for(request),
+                event_name="checklist_rate_limited",
+                metadata_json={
+                    "document_id": str(payload.document_id),
+                    "retry_after_seconds": retry_after,
+                },
+            ),
+        )
         return await service.create_checklist_draft(
             document_id=payload.document_id,
             selected_source_ids=payload.selected_source_ids,
@@ -405,6 +574,26 @@ def create_app() -> FastAPI:
     async def create_analysis_run(payload: CreateAnalysisRunRequest, request: Request):
         auth_manager.require_request_origin(request)
         actor = require_actor(request)
+        await enforce_rate_limit(
+            bucket="analysis_user",
+            subject=actor.username,
+            limit=settings.analysis_rate_limit_per_user,
+            window_seconds=settings.analysis_rate_limit_window_seconds,
+            request=request,
+            actor_username=actor.username,
+            detail="Final review is rate limited for this account.",
+            audit_callback=lambda retry_after: asyncio.to_thread(
+                service.record_project_policy_event,
+                project_id=payload.project_id,
+                actor_username=actor.username,
+                trace_id=request_id_for(request),
+                event_name="analysis_rate_limited",
+                metadata_json={
+                    "project_id": str(payload.project_id),
+                    "retry_after_seconds": retry_after,
+                },
+            ),
+        )
         return await service.create_analysis_run(
             payload,
             actor_username=actor.username,

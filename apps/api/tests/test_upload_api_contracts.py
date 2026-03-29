@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 
 import pytest
@@ -7,14 +8,29 @@ import pytest
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
+os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/postgres")
+os.environ.setdefault("API_HOST", "0.0.0.0")
+os.environ.setdefault("API_PORT", "8001")
+os.environ.setdefault("DOCUMENT_STORAGE_BACKEND", "local")
+os.environ.setdefault("DEFAULT_DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001")
+os.environ.setdefault("ALPHA_USERS_JSON", '[{"username":"test-user","password":"test-pass"}]')
+os.environ.setdefault("ALPHA_BOOTSTRAP_OWNER_USERNAME", "test-user")
+os.environ.setdefault("SESSION_SECRET", "test-session-secret")
+os.environ.setdefault("SESSION_COOKIE_SECURE", "false")
+os.environ.setdefault("APP_ALLOWED_ORIGINS", '["http://localhost:3000"]')
+
 from upload_api.auth import SESSION_COOKIE_NAME, AuthenticatedActor
 from upload_api.main import app, auth_manager
+
+
+def _configured_username() -> str:
+    return next(iter(auth_manager._users.keys()))
 
 
 def _login(client: TestClient) -> None:
     client.cookies.set(
         SESSION_COOKIE_NAME,
-        auth_manager.issue_session_token(AuthenticatedActor(username="local-dev")),
+        auth_manager.issue_session_token(AuthenticatedActor(username=_configured_username())),
     )
 
 

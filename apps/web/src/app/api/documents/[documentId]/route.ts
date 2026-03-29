@@ -1,11 +1,14 @@
 import { NextRequest } from "next/server";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ documentId: string }> },
 ) {
+  if (!API_BASE_URL) {
+    throw new Error("NEXT_PUBLIC_API_BASE_URL must be set.");
+  }
   const { documentId } = await params;
   const targetUrl = `${API_BASE_URL}/v1/documents/${encodeURIComponent(documentId)}/file`;
   const upstream = await fetch(targetUrl, {

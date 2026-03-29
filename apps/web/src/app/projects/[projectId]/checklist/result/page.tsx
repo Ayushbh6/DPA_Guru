@@ -19,8 +19,6 @@ type EditableChecklistRow = ChecklistItem & {
   _origin: "ai" | "manual";
 };
 
-const MANUAL_SOURCE_URL = "https://example.com/manual-check";
-
 function groupChecksByCategory(checks: EditableChecklistRow[]) {
   const groups = new Map<string, EditableChecklistRow[]>();
   for (const check of checks) {
@@ -37,7 +35,7 @@ function manualPlaceholderSource(): ChecklistDraftSource {
     source_type: "INTERNAL_POLICY",
     authority: "User Added",
     source_ref: "Manual reviewer addition",
-    source_url: MANUAL_SOURCE_URL,
+    source_url: "",
     source_excerpt: "This check was added manually during checklist approval.",
     interpretation_notes: "No KB citation attached. Reviewer added this check explicitly.",
   };

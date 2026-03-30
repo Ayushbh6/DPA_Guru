@@ -1,0 +1,81 @@
+{
+  "generated_at_utc": "2026-02-23T20:19:32.963658+00:00",
+  "source_count_requested": 6,
+  "source_count_succeeded": 6,
+  "source_count_failed": 0,
+  "sources": [
+    {
+      "source_id": "gdpr_regulation_2016_679",
+      "title": "GDPR (Regulation (EU) 2016/679) - EUR-Lex EN",
+      "authority": "EUR-Lex",
+      "kind": "html",
+      "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32016R0679",
+      "fetched_at_utc": "2026-02-23T20:19:26.373119+00:00",
+      "char_count": 353221,
+      "line_count": 3846,
+      "txt_path": "kb/gdpr_regulation_2016_679/content.txt",
+      "md_path": "kb/gdpr_regulation_2016_679/content.md"
+    },
+    {
+      "source_id": "scc_transfers_2021_914",
+      "title": "Commission Implementing Decision (EU) 2021/914 (SCCs transfers) - EUR-Lex EN",
+      "authority": "EUR-Lex",
+      "kind": "html",
+      "url": "https://eur-lex.europa.eu/legal-content/EN/ALL/?uri=CELEX%3A32021D0914",
+      "fetched_at_utc": "2026-02-23T20:19:27.526769+00:00",
+      "char_count": 108454,
+      "line_count": 1658,
+      "txt_path": "kb/scc_transfers_2021_914/content.txt",
+      "md_path": "kb/scc_transfers_2021_914/content.md"
+    },
+    {
+      "source_id": "scc_controller_processor_2021_915",
+      "title": "Commission Implementing Decision (EU) 2021/915 (SCCs controller-processor) - EUR-Lex EN",
+      "authority": "EUR-Lex",
+      "kind": "html",
+      "url": "https://eur-lex.europa.eu/legal-content/EN/ALL/?uri=CELEX%3A32021D0915",
+      "fetched_at_utc": "2026-02-23T20:19:28.520629+00:00",
+      "char_count": 32450,
+      "line_count": 612,
+      "txt_path": "kb/scc_controller_processor_2021_915/content.txt",
+      "md_path": "kb/scc_controller_processor_2021_915/content.md"
+    },
+    {
+      "source_id": "edpb_guidelines_07_2020",
+      "title": "EDPB Guidelines 07/2020 on controller and processor concepts (final EN PDF)",
+      "authority": "EDPB",
+      "kind": "pdf",
+      "url": "https://www.edpb.europa.eu/system/files/2023-10/EDPB_guidelines_202007_controllerprocessor_final_en.pdf",
+      "fetched_at_utc": "2026-02-23T20:19:29.016261+00:00",
+      "char_count": 175342,
+      "line_count": 2294,
+      "txt_path": "kb/edpb_guidelines_07_2020/content.txt",
+      "md_path": "kb/edpb_guidelines_07_2020/content.md"
+    },
+    {
+      "source_id": "edpb_recommendations_01_2020",
+      "title": "EDPB Recommendations 01/2020 (v2.0, EN PDF)",
+      "authority": "EDPB",
+      "kind": "pdf",
+      "url": "https://www.edpb.europa.eu/system/files/2021-06/edpb_recommendations_202001vo.2.0_supplementarymeasurestransferstools_en.pdf",
+      "fetched_at_utc": "2026-02-23T20:19:30.677456+00:00",
+      "char_count": 144086,
+      "line_count": 1957,
+      "txt_path": "kb/edpb_recommendations_01_2020/content.txt",
+      "md_path": "kb/edpb_recommendations_01_2020/content.md"
+    },
+    {
+      "source_id": "edpb_opinion_22_2024",
+      "title": "EDPB Opinion 22/2024 on processor/sub-processor obligations (EN PDF)",
+      "authority": "EDPB",
+      "kind": "pdf",
+      "url": "https://www.edpb.europa.eu/system/files/2024-10/edpb_opinion_202422_relianceonprocessors-sub-processors_en.pdf",
+      "fetched_at_utc": "2026-02-23T20:19:32.025157+00:00",
+      "char_count": 130128,
+      "line_count": 1539,
+      "txt_path": "kb/edpb_opinion_22_2024/content.txt",
+      "md_path": "kb/edpb_opinion_22_2024/content.md"
+    }
+  ],
+  "failures": []
+}

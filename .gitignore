@@ -4,7 +4,6 @@ venv/
 !README.md
 test_docs/
 .registry_storage/
-kb/
 .future_work/
 output/
 # Node.js

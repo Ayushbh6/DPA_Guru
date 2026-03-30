@@ -81,6 +81,10 @@ class AuthManager:
     def session_cookie_domain(self) -> str | None:
         return self._settings.session_cookie_domain
 
+    @property
+    def session_cookie_samesite(self) -> str:
+        return self._settings.session_cookie_samesite
+
     def authenticate(self, username: str, password: str) -> AuthenticatedActor | None:
         stored_hash = self._users.get(username.strip())
         if not stored_hash or not verify_password(password, stored_hash):
@@ -187,7 +191,7 @@ def build_cookie_settings(auth_manager: AuthManager) -> dict[str, Any]:
         "key": SESSION_COOKIE_NAME,
         "httponly": True,
         "max_age": SESSION_MAX_AGE_SECONDS,
-        "samesite": "lax",
+        "samesite": auth_manager.session_cookie_samesite,
         "secure": auth_manager.session_cookie_secure,
         "path": "/",
         "domain": auth_manager.session_cookie_domain,

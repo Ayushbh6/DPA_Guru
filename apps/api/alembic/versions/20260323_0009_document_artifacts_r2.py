@@ -53,7 +53,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY document_artifacts_tenant_isolation ON document_artifacts
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (tenant_id = app.current_tenant_id())
         WITH CHECK (tenant_id = app.current_tenant_id());
         """

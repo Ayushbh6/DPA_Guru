@@ -38,11 +38,24 @@ if not configured_url:
         )
     config.set_main_option("sqlalchemy.url", database_url)
 
+active_url = (config.get_main_option("sqlalchemy.url") or "").strip()
+if active_url.startswith("postgresql://"):
+    config.set_main_option(
+        "sqlalchemy.url",
+        active_url.replace("postgresql://", "postgresql+psycopg://", 1),
+    )
+
 target_metadata = Base.metadata
 
 
+def _normalize_database_url(url: str) -> str:
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
+    url = _normalize_database_url(config.get_main_option("sqlalchemy.url"))
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -56,8 +69,12 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    section = dict(config.get_section(config.config_ini_section, {}))
+    section["sqlalchemy.url"] = _normalize_database_url(
+        section.get("sqlalchemy.url") or config.get_main_option("sqlalchemy.url")
+    )
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

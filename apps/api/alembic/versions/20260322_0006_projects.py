@@ -39,7 +39,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY projects_tenant_isolation ON projects
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (tenant_id = app.current_tenant_id())
         WITH CHECK (tenant_id = app.current_tenant_id());
         """

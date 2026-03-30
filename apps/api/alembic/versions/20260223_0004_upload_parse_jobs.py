@@ -79,7 +79,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY document_parse_jobs_tenant_isolation ON document_parse_jobs
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (tenant_id = app.current_tenant_id())
         WITH CHECK (tenant_id = app.current_tenant_id());
         """

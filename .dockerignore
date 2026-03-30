@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv
+.pytest_cache
+.next
+node_modules
+apps/web/node_modules
+apps/web/.next
+output
+.registry_storage
+.env
+.DS_Store
+*.pyc
+__pycache__

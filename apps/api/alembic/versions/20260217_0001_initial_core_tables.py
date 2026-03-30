@@ -205,7 +205,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY tenants_tenant_isolation ON tenants
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (id = app.current_tenant_id())
         WITH CHECK (id = app.current_tenant_id());
         """
@@ -213,7 +213,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY users_tenant_isolation ON users
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (tenant_id = app.current_tenant_id())
         WITH CHECK (tenant_id = app.current_tenant_id());
         """
@@ -221,7 +221,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY documents_tenant_isolation ON documents
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (tenant_id = app.current_tenant_id())
         WITH CHECK (tenant_id = app.current_tenant_id());
         """
@@ -229,7 +229,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY analysis_runs_tenant_isolation ON analysis_runs
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (tenant_id = app.current_tenant_id())
         WITH CHECK (tenant_id = app.current_tenant_id());
         """
@@ -237,7 +237,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY billing_events_tenant_isolation ON billing_events
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (tenant_id = app.current_tenant_id())
         WITH CHECK (tenant_id = app.current_tenant_id());
         """
@@ -245,7 +245,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY audit_events_tenant_isolation ON audit_events
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (tenant_id = app.current_tenant_id())
         WITH CHECK (tenant_id = app.current_tenant_id());
         """
@@ -253,7 +253,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY document_chunks_tenant_isolation ON document_chunks
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (
           EXISTS (
             SELECT 1
@@ -275,7 +275,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY findings_tenant_isolation ON findings
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (
           EXISTS (
             SELECT 1
@@ -297,7 +297,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY rule_hits_tenant_isolation ON rule_hits
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (
           EXISTS (
             SELECT 1
@@ -319,7 +319,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY review_actions_tenant_isolation ON review_actions
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (
           EXISTS (
             SELECT 1

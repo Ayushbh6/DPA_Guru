@@ -41,6 +41,14 @@ def _require_env_bool(name: str) -> bool:
     raise RuntimeError(f"{name} must be a boolean.")
 
 
+def _require_env_choice(name: str, allowed: set[str]) -> str:
+    raw = _require_env(name).strip().lower()
+    if raw not in allowed:
+        choices = ", ".join(sorted(allowed))
+        raise RuntimeError(f"{name} must be one of: {choices}.")
+    return raw
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -111,6 +119,7 @@ class Settings:
     alpha_bootstrap_owner_username: str
     session_secret: str
     session_cookie_secure: bool
+    session_cookie_samesite: str
     session_cookie_domain: str | None
     app_allowed_origins: tuple[str, ...]
     alpha_max_projects_per_user: int
@@ -190,6 +199,7 @@ def load_settings() -> Settings:
         alpha_bootstrap_owner_username=alpha_bootstrap_owner_username,
         session_secret=session_secret,
         session_cookie_secure=_require_env_bool("SESSION_COOKIE_SECURE"),
+        session_cookie_samesite=_require_env_choice("SESSION_COOKIE_SAMESITE", {"lax", "strict", "none"}),
         session_cookie_domain=_env_first("SESSION_COOKIE_DOMAIN"),
         app_allowed_origins=app_allowed_origins,
         alpha_max_projects_per_user=int(os.getenv("ALPHA_MAX_PROJECTS_PER_USER", "20")),

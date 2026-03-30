@@ -63,7 +63,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE POLICY checklist_draft_jobs_tenant_isolation ON checklist_draft_jobs
-        FOR ALL TO authenticated
+        FOR ALL TO PUBLIC
         USING (tenant_id = app.current_tenant_id())
         WITH CHECK (tenant_id = app.current_tenant_id());
         """

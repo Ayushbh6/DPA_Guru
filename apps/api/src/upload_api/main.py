@@ -246,7 +246,7 @@ def create_app() -> FastAPI:
             domain=auth_manager.session_cookie_domain,
             secure=auth_manager.session_cookie_secure,
             httponly=True,
-            samesite="lax",
+            samesite=auth_manager.session_cookie_samesite,
         )
         await asyncio.to_thread(
             service.record_auth_event,

@@ -46,6 +46,7 @@ def _settings(tmp_path: Path) -> Settings:
         alpha_bootstrap_owner_username="local-dev",
         session_secret="local-dev-session-secret-change-me",
         session_cookie_secure=False,
+        session_cookie_samesite="lax",
         session_cookie_domain=None,
         app_allowed_origins=("http://localhost:3000",),
         alpha_max_projects_per_user=20,

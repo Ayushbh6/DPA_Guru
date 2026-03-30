@@ -576,11 +576,12 @@ class ReviewAgent:
                 continue
             md_path = row.get("md_path")
             txt_path = row.get("txt_path")
-            local_path = md_path or txt_path
-            if not isinstance(local_path, str):
-                continue
-            path = self._settings.repo_root / local_path
-            if not path.exists():
+            candidate_paths = [path for path in (md_path, txt_path) if isinstance(path, str)]
+            path = next(
+                (self._settings.repo_root / candidate for candidate in candidate_paths if (self._settings.repo_root / candidate).exists()),
+                None,
+            )
+            if path is None:
                 continue
             text = path.read_text(encoding="utf-8")
             records.append(

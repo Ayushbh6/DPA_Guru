@@ -2,6 +2,7 @@
 venv/
 *.md
 !README.md
+!kb/**/*.md
 test_docs/
 .registry_storage/
 .future_work/

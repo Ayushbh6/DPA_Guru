@@ -475,10 +475,6 @@ export default function AnalysisSetupPage() {
                         </p>
                       )}
                     </div>
-                    <div className="border border-white/10 bg-white/[0.02] px-4 py-3 text-sm min-w-[220px]">
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Draft Job</div>
-                      <div className="mt-1 text-white/70 break-all">{draftJob.checklist_draft_id}</div>
-                    </div>
                   </div>
 
                   <div className="mt-6 border border-white/10 bg-white/[0.02] p-4">

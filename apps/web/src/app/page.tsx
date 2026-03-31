@@ -7,7 +7,7 @@ export default function Home() {
     <main className="relative flex min-h-screen flex-col items-center" style={{ background: 'var(--bg)' }}>
       <HeroScroll />
 
-      <section className="w-full py-8 relative z-10">
+      <section className="w-full py-4 md:py-8 relative z-10">
         <ScrollRevealText>
           Understand your obligations with absolute clarity.
         </ScrollRevealText>
@@ -24,10 +24,10 @@ export default function Home() {
       <ActionSection />
 
       <footer
-        className="w-full py-6 flex items-center justify-center text-[10px] tracking-widest uppercase font-light"
+        className="w-full py-8 flex items-center justify-center text-[10px] tracking-[0.25em] uppercase font-light"
         style={{ borderTop: '1px solid var(--line)', color: 'var(--text-3)' }}
       >
-        © 2026 MERLIN AI — ALL RIGHTS RESERVED
+        © 2026 Merlin AI
       </footer>
     </main>
   );

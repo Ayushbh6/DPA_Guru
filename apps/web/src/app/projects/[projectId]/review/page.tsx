@@ -46,11 +46,11 @@ export default function ReviewPage() {
 
   return (
     <div className="grid gap-6 pb-6">
-      <section className="relative overflow-hidden border px-6 py-7 md:px-8 md:py-8" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}>
+      <section className="relative overflow-hidden px-5 py-6 md:px-7 md:py-7" style={{ background: 'var(--bg-1)' }}>
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_360px]">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'var(--text-3)' }}>Final Review Control</div>
-            <h2 className="mt-3 max-w-4xl text-3xl font-semibold leading-tight md:text-[2.6rem]" style={{ color: 'var(--text)' }}>
+            <div className="text-[11px] uppercase tracking-[0.18em] font-medium" style={{ color: 'var(--text-3)' }}>Final Review Control</div>
+            <h2 className="mt-3 max-w-4xl text-2xl font-semibold leading-tight md:text-3xl" style={{ color: 'var(--text)' }}>
               Run the full contract review and monitor it live.
             </h2>
             <p className="mt-4 max-w-3xl text-sm leading-7 md:text-[15px]" style={{ color: 'var(--text-2)' }}>
@@ -84,7 +84,7 @@ export default function ReviewPage() {
 
           <div className="grid gap-3">
             <div className="border px-5 py-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-              <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>
+              <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: 'var(--text-3)' }}>
                 <TimerReset className="h-3.5 w-3.5" />
                 Elapsed Time
               </div>
@@ -95,11 +95,11 @@ export default function ReviewPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="border px-4 py-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Checklist Version</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: 'var(--text-3)' }}>Checklist Version</div>
                 <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>{approvedChecklist.version}</div>
               </div>
               <div className="border px-4 py-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Latest Run</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: 'var(--text-3)' }}>Latest Run</div>
                 <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>
                   {analysisRun ? formatReviewStage(analysisRun.stage || undefined, analysisRun.status) : "Not started"}
                 </div>
@@ -109,10 +109,10 @@ export default function ReviewPage() {
         </div>
       </section>
 
-      <section className="border p-6 md:p-8" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}>
+      <section className="p-5 md:p-7" style={{ background: 'var(--bg-1)' }}>
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
-            <div className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Run Status</div>
+            <div className="text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: 'var(--text-3)' }}>Run Status</div>
             <div className="mt-3 text-2xl font-medium" style={{ color: 'var(--text)' }}>
               {analysisRun ? formatReviewStage(analysisRun.stage || undefined, analysisRun.status) : "Ready"}
             </div>
@@ -124,15 +124,15 @@ export default function ReviewPage() {
 
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="border px-4 py-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-              <div className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Progress</div>
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: 'var(--text-3)' }}>Progress</div>
               <div className="mt-2 text-lg" style={{ color: 'var(--text)' }}>{analysisRun ? formatPercent(analysisRun.progress_pct) : "0%"}</div>
             </div>
             <div className="border px-4 py-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-              <div className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Findings Saved</div>
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: 'var(--text-3)' }}>Findings Saved</div>
               <div className="mt-2 text-lg" style={{ color: 'var(--text)' }}>{findingCount}</div>
             </div>
             <div className="border px-4 py-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-              <div className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Started</div>
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: 'var(--text-3)' }}>Started</div>
               <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>
                 {analysisRun?.started_at ? new Date(analysisRun.started_at).toLocaleTimeString() : "Not started"}
               </div>

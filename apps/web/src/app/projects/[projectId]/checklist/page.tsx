@@ -270,10 +270,6 @@ export default function SetupChecklistPage() {
                 </p>
               )}
             </div>
-            <div className="border px-4 py-3 text-sm min-w-[220px]" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-              <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Draft Job</div>
-              <div className="mt-1 break-all" style={{ color: 'var(--text-2)' }}>{checklistDraft.checklist_draft_id}</div>
-            </div>
           </div>
 
           <div className="mt-6 border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>

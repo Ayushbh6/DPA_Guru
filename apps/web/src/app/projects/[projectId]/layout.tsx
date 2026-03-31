@@ -375,12 +375,12 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
       <aside
         className={`fixed inset-y-0 left-0 z-40 flex flex-col transition-all duration-300 md:relative md:inset-auto md:shrink-0 ${
           sidebarOpen
-            ? "translate-x-0 w-[min(84vw,320px)] md:w-[300px]"
+            ? "translate-x-0 w-[min(84vw,320px)] md:w-[260px]"
             : "-translate-x-full w-[min(84vw,320px)] md:w-[72px] md:translate-x-0"
         }`}
         style={{ background: 'var(--bg-1)', borderRight: '1px solid var(--line)' }}
       >
-        <div className="flex h-14 items-center justify-between px-4 md:h-16" style={{ borderBottom: '1px solid var(--line)' }}>
+        <div className="flex h-12 items-center justify-between px-4 md:h-14" style={{ borderBottom: '1px solid var(--line)' }}>
           <div
             className={`flex items-center gap-3 overflow-hidden transition-opacity duration-300 ${
               sidebarOpen ? "opacity-100" : "w-0 opacity-0"
@@ -502,43 +502,34 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
           <PanelLeftOpen className="h-4 w-4" />
         </button>
 
-        <div className="mx-auto w-full max-w-7xl px-4 pb-6 pt-14 md:flex md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto md:px-8 md:py-8">
-          <div className="mb-4 hidden shrink-0 md:mb-5 md:block">
-            <Link
-              href="/"
-              className="inline-flex items-center gap-2 text-sm transition-colors"
-              style={{ color: 'var(--text-3)' }}
-              onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
-              onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back to Home
-            </Link>
-          </div>
-
-          <header className="shrink-0 px-3 py-3 md:px-6 md:py-5" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0">
-                <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'var(--text-3)' }}>Analysis Session</div>
+        <div className="mx-auto w-full max-w-7xl px-4 pb-6 pt-14 md:flex md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto md:px-5 md:py-4 lg:px-6 lg:py-5">
+          <header className="shrink-0 px-4 py-2.5 md:px-5 md:py-2.5 lg:px-6 lg:py-3" style={{ background: 'var(--bg-1)' }}>
+            <div className="min-w-0">
                 {!renameMode ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <h1 className="truncate text-xl font-semibold tracking-tight md:text-4xl" style={{ color: 'var(--text)' }}>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <h1 className="truncate text-lg font-semibold tracking-tight md:text-xl lg:text-2xl" style={{ color: 'var(--text)' }}>
                       {currentProject?.name}
                     </h1>
                     <button
                       type="button"
                       onClick={() => setRenameMode(true)}
-                      className="inline-flex items-center gap-2 text-xs transition-colors md:text-sm"
+                      className="inline-flex items-center text-xs transition-colors"
                       style={{ color: 'var(--text-3)' }}
                       onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-2)')}
                       onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
                     >
-                      <PencilLine className="h-4 w-4" />
-                      Rename
+                      <PencilLine className="h-3.5 w-3.5" />
                     </button>
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em]" style={projectStatusStyle(currentProject?.status || 'EMPTY')}>
+                      <span className="inline-block h-1.5 w-1.5" style={{ background: statusDotColor(currentProject?.status || 'EMPTY'), borderRadius: '50%' }} />
+                      {formatStatus(currentProject?.status || "EMPTY")}
+                    </span>
+                    <span className="text-xs" style={{ color: 'var(--text-3)' }}>
+                      {currentProject?.last_activity_at ? formatRelativeDate(currentProject.last_activity_at) : "Just now"}
+                    </span>
                   </div>
                 ) : (
-                  <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                  <div className="flex flex-col gap-3 sm:flex-row">
                     <input
                       autoFocus
                       value={renameValue}
@@ -550,7 +541,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                            setRenameValue(currentProject?.name || "");
                         }
                       }}
-                      className="w-full px-4 py-3 text-sm outline-none sm:max-w-xl"
+                      className="w-full px-3 py-2 text-sm outline-none sm:max-w-xl"
                       style={{ border: '1px solid var(--line)', background: 'var(--bg-2)', color: 'var(--text)' }}
                       onFocus={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
                       onBlur={e => (e.currentTarget.style.borderColor = 'var(--line)')}
@@ -560,7 +551,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                         type="button"
                         onClick={() => void handleRename()}
                         disabled={renaming || !renameValue.trim()}
-                        className="inline-flex items-center gap-2 px-4 py-3 text-sm font-medium disabled:opacity-40 transition-opacity hover:opacity-80"
+                        className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium disabled:opacity-40 transition-opacity hover:opacity-80"
                         style={{ background: 'var(--invert)', color: 'var(--invert-fg)', border: '1px solid var(--line)' }}
                       >
                         {renaming ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -572,7 +563,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                           setRenameMode(false);
                           setRenameValue(currentProject?.name || "");
                         }}
-                        className="inline-flex items-center gap-2 px-4 py-3 text-sm transition-colors"
+                        className="inline-flex items-center gap-2 px-3 py-2 text-sm transition-colors"
                         style={{ border: '1px solid var(--line)', color: 'var(--text-2)' }}
                       >
                         <X className="h-4 w-4" />
@@ -581,31 +572,10 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                     </div>
                   </div>
                 )}
-                <p className="mt-4 hidden max-w-3xl text-sm leading-6 md:block md:text-base" style={{ color: 'var(--text-3)' }}>
-                  One project owns the uploaded DPA, parsing job, checklist draft, and the later final review.
-                </p>
-              </div>
-
-              <div className="grid gap-2 sm:grid-cols-2 md:gap-3">
-                <div className="px-3 py-3 md:px-4 md:py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                  <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Project Status</div>
-                  <div className="mt-2">
-                    <span className="inline-flex items-center border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]" style={projectStatusStyle(currentProject?.status || 'EMPTY')}>
-                      {formatStatus(currentProject?.status || "EMPTY")}
-                    </span>
-                  </div>
-                </div>
-                <div className="px-3 py-3 md:px-4 md:py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                  <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Last Activity</div>
-                  <div className="mt-2 text-sm" style={{ color: 'var(--text)' }}>
-                    {currentProject?.last_activity_at ? formatRelativeDate(currentProject.last_activity_at) : "Just now"}
-                  </div>
-                </div>
-              </div>
             </div>
 
             {/* Tabs */}
-            <div className="mt-5 -mx-4 -mb-4 flex overflow-x-auto px-4 md:-mx-6 md:-mb-5 md:px-6" style={{ borderTop: '1px solid var(--line)' }}>
+            <div className="mt-3 -mx-4 -mb-2.5 flex overflow-x-auto pr-4 px-4 md:-mx-5 md:-mb-2.5 md:px-5 md:pr-5 lg:-mx-6 lg:-mb-3 lg:px-6 lg:pr-6" style={{ borderTop: '1px solid var(--line)' }}>
               {tabs.map((tab, tabIdx) => {
                 const isActive = pathname.startsWith(tab.href);
                 return (
@@ -613,7 +583,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                     key={tab.name}
                     href={tab.href}
                     aria-label={tab.name}
-                    className="flex items-center gap-2 whitespace-nowrap border-b-[3px] px-3 py-3 text-xs font-medium transition-colors md:px-4 md:py-4 md:text-sm"
+                    className="flex items-center gap-1.5 whitespace-nowrap border-b-2 px-2.5 py-2 text-xs font-medium transition-colors md:px-3 md:py-2 md:text-sm lg:px-3.5 lg:py-2.5"
                     style={{
                       borderBottomColor: isActive ? 'var(--accent)' : 'transparent',
                       color: isActive ? 'var(--text)' : 'var(--text-3)',
@@ -621,7 +591,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                     onMouseEnter={e => { if (!isActive) { e.currentTarget.style.color = 'var(--text-2)'; e.currentTarget.style.borderBottomColor = 'var(--line-2)'; } }}
                     onMouseLeave={e => { if (!isActive) { e.currentTarget.style.color = 'var(--text-3)'; e.currentTarget.style.borderBottomColor = 'transparent'; } }}
                   >
-                    <span className="inline-flex h-5 w-5 items-center justify-center text-[10px] font-bold" style={{ background: isActive ? 'var(--accent)' : 'var(--bg-2)', color: isActive ? 'var(--invert-fg)' : 'var(--text-3)' }}>{tabIdx + 1}</span>
+                    <span className="inline-flex h-5 w-5 items-center justify-center text-[10px] font-semibold" style={{ background: isActive ? 'var(--accent)' : 'var(--bg-2)', color: isActive ? 'var(--invert-fg)' : 'var(--text-3)', borderRadius: '4px' }}>{tabIdx + 1}</span>
                     <span className="md:hidden">{tab.shortName}</span>
                     <span className="hidden md:inline">{tab.name}</span>
                   </Link>
@@ -636,7 +606,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
           )}
 
-          <div className="mt-4 md:mt-6 md:min-h-0 md:flex-1 md:overflow-y-auto md:pr-1">{children}</div>
+          <div className="mt-2 md:mt-3 md:min-h-0 md:flex-1 md:overflow-y-auto md:pr-1 lg:mt-4">{children}</div>
         </div>
       </section>
     </main>

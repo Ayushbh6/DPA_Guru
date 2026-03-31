@@ -61,10 +61,10 @@ export default function Navbar() {
       className="fixed top-0 left-0 w-full z-50 backdrop-blur-xl"
       style={{
         background: 'color-mix(in srgb, var(--bg) 85%, transparent)',
-        borderBottom: '1px solid var(--line)',
+        borderBottom: '1px solid color-mix(in srgb, var(--line) 60%, transparent)',
       }}
     >
-      <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
         <Link
           href="/"
           className="flex items-center gap-3 group"
@@ -74,7 +74,7 @@ export default function Navbar() {
             className="w-5 h-5 transition-transform duration-300 group-hover:scale-110"
             style={{ color: 'var(--accent)' }}
           />
-          <span className="text-[15px] font-medium tracking-wide">
+          <span className="text-sm font-medium tracking-wide">
             Merlin AI
           </span>
         </Link>

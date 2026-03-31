@@ -314,12 +314,12 @@ export default function ChecklistResultPage() {
 
   return (
     <div className="grid gap-6">
-      <section className="overflow-hidden border" style={{ background: 'var(--bg-1)', borderColor: 'var(--line)' }}>
+      <section className="overflow-hidden" style={{ background: 'var(--bg-1)' }}>
         <div className="h-px" style={{ background: 'var(--accent)', opacity: 0.4 }} />
-        <div className="p-4 md:p-7">
+        <div className="p-4 md:p-5 lg:p-7">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
-              <div className="text-xs uppercase tracking-[0.2em]" style={{ color: 'var(--text-3)' }}>Checklist Approval</div>
+              <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Checklist Approval</div>
               <h2 className="mt-2 text-xl font-semibold tracking-tight md:text-2xl" style={{ color: 'var(--text)' }}>
                 {approvedSummary ? "Approved Checklist Loaded" : "Review, Keep, Reject, Or Add Checks"}
               </h2>
@@ -338,9 +338,9 @@ export default function ChecklistResultPage() {
             )}
           </div>
 
-          <div className="mt-6 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] md:gap-4">
-            <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-              <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Version</div>
+          <div className="mt-6 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] lg:gap-4">
+            <div className="p-4" style={{ background: 'var(--bg-2)' }}>
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: 'var(--text-3)' }}>Version</div>
               <input
                 value={version}
                 onChange={(event) => setVersion(event.target.value)}
@@ -348,8 +348,8 @@ export default function ChecklistResultPage() {
                 style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
               />
             </div>
-            <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
-              <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Change Note</div>
+            <div className="p-4" style={{ background: 'var(--bg-2)' }}>
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: 'var(--text-3)' }}>Change Note</div>
               <input
                 value={changeNote}
                 onChange={(event) => setChangeNote(event.target.value)}
@@ -380,33 +380,33 @@ export default function ChecklistResultPage() {
           </div>
 
           {/* KPI summary bar */}
-          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="flex items-center gap-3 border px-4 py-3" style={{ borderColor: 'var(--line)', background: 'var(--bg)' }}>
+          <div className="mt-5 grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
+            <div className="flex items-center gap-3 px-4 py-3" style={{ background: 'var(--bg-2)' }}>
               <div className="h-8 w-1" style={{ background: 'var(--success)' }} />
               <div>
                 <div className="text-lg font-semibold" style={{ color: 'var(--success)' }}>{acceptedCount}</div>
-                <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Accepted</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.12em]" style={{ color: 'var(--text-3)' }}>Accepted</div>
               </div>
             </div>
-            <div className="flex items-center gap-3 border px-4 py-3" style={{ borderColor: 'var(--line)', background: 'var(--bg)' }}>
+            <div className="flex items-center gap-3 px-4 py-3" style={{ background: 'var(--bg-2)' }}>
               <div className="h-8 w-1" style={{ background: 'var(--danger)' }} />
               <div>
                 <div className="text-lg font-semibold" style={{ color: 'var(--danger)' }}>{checks.length - acceptedCount}</div>
-                <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Rejected</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.12em]" style={{ color: 'var(--text-3)' }}>Rejected</div>
               </div>
             </div>
-            <div className="flex items-center gap-3 border px-4 py-3" style={{ borderColor: 'var(--line)', background: 'var(--bg)' }}>
+            <div className="flex items-center gap-3 px-4 py-3" style={{ background: 'var(--bg-2)' }}>
               <div className="h-8 w-1" style={{ background: 'var(--accent)' }} />
               <div>
                 <div className="text-lg font-semibold" style={{ color: 'var(--text)' }}>{checks.length}</div>
-                <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Total</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.12em]" style={{ color: 'var(--text-3)' }}>Total</div>
               </div>
             </div>
-            <div className="flex items-center gap-3 border px-4 py-3" style={{ borderColor: 'var(--line)', background: 'var(--bg)' }}>
+            <div className="flex items-center gap-3 px-4 py-3" style={{ background: 'var(--bg-2)' }}>
               <div className="h-8 w-1" style={{ background: 'var(--warning)' }} />
               <div>
                 <div className="text-lg font-semibold" style={{ color: 'var(--text)' }}>{groupedChecks.length}</div>
-                <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Categories</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.12em]" style={{ color: 'var(--text-3)' }}>Categories</div>
               </div>
             </div>
           </div>
@@ -415,8 +415,8 @@ export default function ChecklistResultPage() {
             {groupedChecks.map(([category, grouped]) => (
               <div key={category}>
                 <div className="flex items-center gap-3">
-                <div className="text-xs uppercase tracking-[0.2em]" style={{ color: 'var(--text-3)' }}>{category}</div>
-                <span className="inline-flex items-center border px-2 py-0.5 text-[10px] font-medium" style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text-2)' }}>{grouped.length}</span>
+                <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>{category}</div>
+                <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium" style={{ background: 'var(--bg-2)', color: 'var(--text-2)' }}>{grouped.length}</span>
               </div>
                 <div className="mt-4 grid gap-4">
                   {grouped.map((check) => {

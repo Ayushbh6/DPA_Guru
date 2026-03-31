@@ -20,9 +20,9 @@ export default function ScrollRevealText({ children, className = "" }: ScrollRev
         textRef.current,
         {
           opacity: 0,
-          y: 80,
-          scale: 0.95,
-          filter: "blur(10px)",
+          y: 60,
+          scale: 0.97,
+          filter: "blur(8px)",
         },
         {
           opacity: 1,
@@ -33,18 +33,18 @@ export default function ScrollRevealText({ children, className = "" }: ScrollRev
           ease: "power3.out",
           scrollTrigger: {
             trigger: textRef.current,
-            start: "top 85%",
-            end: "top 20%",
+            start: "top 90%",
+            end: "top 35%",
             scrub: true,
             // Apple-style fade out as you scroll past it
             onLeave: () => {
-              gsap.to(textRef.current, { opacity: 0, y: -80, scale: 1.05, filter: "blur(10px)", duration: 0.8, ease: "power2.inOut" });
+              gsap.to(textRef.current, { opacity: 0, y: -60, scale: 1.02, filter: "blur(8px)", duration: 1, ease: "power2.inOut" });
             },
             onEnterBack: () => {
-              gsap.to(textRef.current, { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.8, ease: "power2.out" });
+              gsap.to(textRef.current, { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 1, ease: "power2.out" });
             },
             onLeaveBack: () => {
-               gsap.to(textRef.current, { opacity: 0, y: 80, scale: 0.95, filter: "blur(10px)", duration: 0.8, ease: "power2.inOut" });
+               gsap.to(textRef.current, { opacity: 0, y: 60, scale: 0.97, filter: "blur(8px)", duration: 1, ease: "power2.inOut" });
             }
           },
         }
@@ -55,9 +55,9 @@ export default function ScrollRevealText({ children, className = "" }: ScrollRev
   }, []);
 
   return (
-    <div ref={textRef} className={`py-12 flex items-center justify-center text-center ${className}`}>
+    <div ref={textRef} className={`py-20 md:py-28 lg:py-36 flex items-center justify-center text-center ${className}`}>
       <h2
-        className="text-4xl md:text-6xl lg:text-7xl font-medium tracking-tight max-w-5xl px-6 leading-tight"
+        className="text-3xl md:text-5xl lg:text-6xl font-medium tracking-tight max-w-4xl px-6 leading-[1.15]"
         style={{ color: 'var(--text)' }}
       >
         {children}

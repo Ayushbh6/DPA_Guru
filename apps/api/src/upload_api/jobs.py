@@ -1687,7 +1687,7 @@ class UploadPipelineService:
                 await self._transition_job(
                     job_id,
                     stage="PARSING_MISTRAL_OCR",
-                    message=f"Parsing {pdf_classification} PDF with Mistral OCR ({self.settings.mistral_ocr_model}).",
+                    message=f"Parsing {pdf_classification} PDF document.",
                 )
                 parsed = await self._parse_via_mistral_ocr(job_id, file_path, mime_type)
                 parsed_text = parsed.text
@@ -1700,7 +1700,7 @@ class UploadPipelineService:
                 await self._transition_job(
                     job_id,
                     stage="PARSING_MISTRAL_OCR",
-                    message=f"Parsing DOCX with Mistral OCR ({self.settings.mistral_ocr_model}).",
+                    message="Parsing DOCX document.",
                 )
                 parsed = await self._parse_via_mistral_ocr(job_id, file_path, mime_type)
                 parsed_text = parsed.text

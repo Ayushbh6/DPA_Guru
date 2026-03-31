@@ -216,7 +216,7 @@ async def parse_with_mistral_ocr(
     if Mistral is None:
         raise RuntimeError("mistralai is required for Mistral OCR integration.")
     if progress_cb:
-        await progress_cb("Submitting file to Mistral OCR")
+        await progress_cb("Extracting text from document")
 
     def _run() -> ParseOutput:
         with Mistral(api_key=api_key) as mistral:

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, CheckCircle2, Download, ExternalLink, LoaderCircle, Plus, Trash2, X } from "lucide-react";
 import {
   approveChecklist,
+  CHECKLIST_CATEGORIES,
+  type ChecklistCategory,
   getApprovedChecklist,
   type ChecklistDraftItem,
   type ChecklistDraftSource,
@@ -78,7 +80,7 @@ function createManualCheck(checks: EditableChecklistRow[]): EditableChecklistRow
   return {
     check_id: nextManualCheckId(checks),
     title: "",
-    category: "Custom",
+    category: CHECKLIST_CATEGORIES[0],
     legal_basis: [],
     required: true,
     severity: "MEDIUM",
@@ -118,6 +120,9 @@ function buildApprovalChecks(checks: EditableChecklistRow[]): ChecklistItem[] {
 
     if (!title) throw new Error(`${check.check_id}: title is required.`);
     if (!category) throw new Error(`${check.check_id}: category is required.`);
+    if (!CHECKLIST_CATEGORIES.includes(category as ChecklistCategory)) {
+      throw new Error(`${check.check_id}: choose one of the approved checklist categories.`);
+    }
     if (!evidenceHint) throw new Error(`${check.check_id}: evidence hint is required.`);
     if (!legalBasis.length) throw new Error(`${check.check_id}: add at least one legal basis line.`);
     if (!passCriteria.length) throw new Error(`${check.check_id}: add at least one pass criteria line.`);
@@ -126,7 +131,7 @@ function buildApprovalChecks(checks: EditableChecklistRow[]): ChecklistItem[] {
     return {
       check_id: check.check_id,
       title,
-      category,
+      category: category as ChecklistCategory,
       legal_basis: legalBasis,
       required: true,
       severity: check.severity,
@@ -500,12 +505,16 @@ export default function ChecklistResultPage() {
                         <div className="grid gap-4 lg:grid-cols-2">
                           <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
                             <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Category</div>
-                            <input
+                            <select
                               value={current.category}
-                              onChange={(event) => updateCheck(index, { category: event.target.value })}
+                              onChange={(event) => updateCheck(index, { category: event.target.value as ChecklistCategory })}
                               className="mt-3 w-full border px-3 py-2 text-sm outline-none"
                               style={{ borderColor: 'var(--line)', background: 'var(--bg)', color: 'var(--text)' }}
-                            />
+                            >
+                              {CHECKLIST_CATEGORIES.map((category) => (
+                                <option key={category} value={category}>{category}</option>
+                              ))}
+                            </select>
                           </div>
                           <div className="border p-4" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
                             <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Evidence Hint</div>

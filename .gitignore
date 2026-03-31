@@ -51,3 +51,5 @@ coverage.xml
 .idea/
 *.swp
 *.swo
+scripts/
+.playwright-cli/

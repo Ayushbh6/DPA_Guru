@@ -119,11 +119,18 @@ export default function DashboardPage() {
 
     try {
       const bootstrap = await createUpload(file, projectId);
-      await refreshProject(false);
       setDetail((prev) =>
         prev
           ? {
               ...prev,
+              document: {
+                document_id: bootstrap.document_id,
+                filename: file.name,
+                mime_type: file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+                page_count: 0,
+                parse_status: "QUEUED",
+                uploaded_at: new Date().toISOString(),
+              },
               parse_job: {
                 job_id: bootstrap.job_id,
                 document_id: bootstrap.document_id,
@@ -138,6 +145,7 @@ export default function DashboardPage() {
           : prev,
       );
       connectUploadSocket(bootstrap.job_id);
+      void refreshProject(false);
       await refreshSidebar();
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "Upload failed.");

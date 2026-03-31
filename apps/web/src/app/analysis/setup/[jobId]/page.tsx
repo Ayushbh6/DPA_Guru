@@ -19,6 +19,7 @@ import { motion } from "framer-motion";
 import {
   checklistDraftEventsUrl,
   createChecklistDraft,
+  getChecklistDraftStatus,
   getUploadResult,
   listReferenceSources,
   type ChecklistDraftItem,
@@ -33,6 +34,13 @@ const CHECKLIST_STAGE_LABELS: Record<string, string> = {
   EXPANDING_SOURCE_CONTEXT: "Gathering Supporting Information",
   INSPECTING_DPA: "Reviewing Your Document",
   DRAFTING_CHECKLIST: "Drafting Your Checklist",
+  GROUPING_CATEGORIES: "Grouping By Category",
+  EMBEDDING_CHECKS: "Embedding Draft Checks",
+  FORMING_SEMANTIC_GROUPS: "Forming Semantic Groups",
+  VERIFYING_OVERLAPS: "Verifying Overlaps",
+  RESOLVING_GROUPS: "Resolving Semantic Groups",
+  MERGING_GROUPS: "Merging Groups",
+  FINALIZING_OUTPUT: "Finalizing Synthesis",
   VALIDATING_OUTPUT: "Finalizing Checklist",
   COMPLETED: "Completed",
   FAILED: "Failed",
@@ -46,6 +54,32 @@ function formatNumber(value: number | null | undefined) {
 function formatChecklistStage(stage: string | undefined) {
   if (!stage) return "Starting Checklist";
   return CHECKLIST_STAGE_LABELS[stage] || stage.replaceAll("_", " ");
+}
+
+function formatChecklistMeta(meta: Record<string, unknown> | null | undefined) {
+  if (!meta) return null;
+  const parts: string[] = [];
+  const groupsCompleted = typeof meta.semantic_groups_resolved === "number"
+    ? meta.semantic_groups_resolved
+    : typeof meta.merge_groups_completed === "number"
+      ? meta.merge_groups_completed
+      : null;
+  const groupsTotal = typeof meta.semantic_groups_total === "number"
+    ? meta.semantic_groups_total
+    : typeof meta.merge_groups_total === "number"
+      ? meta.merge_groups_total
+      : null;
+  const exactDuplicatesRemoved = typeof meta.exact_duplicates_removed === "number" ? meta.exact_duplicates_removed : null;
+  if (groupsCompleted != null && groupsTotal != null && groupsTotal > 0) {
+    parts.push(`Groups ${groupsCompleted}/${groupsTotal}`);
+  }
+  if (exactDuplicatesRemoved != null && exactDuplicatesRemoved > 0) {
+    parts.push(`Exact duplicates removed ${exactDuplicatesRemoved}`);
+  }
+  if (meta.fallback_used === true) {
+    parts.push("Legacy fallback used");
+  }
+  return parts.length ? parts.join(" • ") : null;
 }
 
 function groupChecksByCategory(checks: ChecklistDraftItem[]) {
@@ -78,6 +112,7 @@ export default function AnalysisSetupPage() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const pingTimerRef = useRef<number | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!jobId) return;
@@ -109,6 +144,7 @@ export default function AnalysisSetupPage() {
   useEffect(() => {
     return () => {
       if (pingTimerRef.current) window.clearInterval(pingTimerRef.current);
+      if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
       if (wsRef.current) wsRef.current.close();
     };
   }, []);
@@ -134,6 +170,47 @@ export default function AnalysisSetupPage() {
     }
   }
 
+  function stopPolling() {
+    if (pollTimerRef.current) {
+      window.clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }
+
+  function applyDraftSnapshot(snapshot: ChecklistDraftStatus) {
+    setDraftJob(snapshot);
+    if (snapshot.status === "COMPLETED") {
+      setGenerating(false);
+      closeSocket();
+      stopPolling();
+    } else if (snapshot.status === "FAILED") {
+      setGenerating(false);
+      setError(snapshot.error_message || "Checklist generation failed.");
+      closeSocket();
+      stopPolling();
+    }
+  }
+
+  function startPolling(draftId: string) {
+    stopPolling();
+
+    const poll = async () => {
+      try {
+        const snapshot = await getChecklistDraftStatus(draftId);
+        applyDraftSnapshot(snapshot);
+      } catch (pollError) {
+        setGenerating(false);
+        setError(pollError instanceof Error ? pollError.message : "Checklist generation status could not be refreshed.");
+        stopPolling();
+      }
+    };
+
+    void poll();
+    pollTimerRef.current = window.setInterval(() => {
+      void poll();
+    }, 2000);
+  }
+
   function connectChecklistSocket(draftId: string) {
     closeSocket();
     const ws = new WebSocket(checklistDraftEventsUrl(draftId));
@@ -151,26 +228,17 @@ export default function AnalysisSetupPage() {
         if (hasSocketError(payload) && payload.error) {
           setError(payload.error);
           setGenerating(false);
+          stopPolling();
           return;
         }
-        const snapshot = payload as ChecklistDraftStatus;
-        setDraftJob(snapshot);
-        if (snapshot.status === "COMPLETED") {
-          setGenerating(false);
-          closeSocket();
-        } else if (snapshot.status === "FAILED") {
-          setGenerating(false);
-          setError(snapshot.error_message || "Checklist generation failed.");
-          closeSocket();
-        }
+        applyDraftSnapshot(payload as ChecklistDraftStatus);
       } catch {
-        setError("Received invalid checklist job event.");
-        setGenerating(false);
+        // Ignore invalid websocket payloads; polling remains authoritative.
       }
     };
 
     ws.onerror = () => {
-      setError("Checklist event stream disconnected.");
+      closeSocket();
     };
 
     ws.onclose = () => {
@@ -196,6 +264,7 @@ export default function AnalysisSetupPage() {
         selected_source_ids: selectedIds,
         user_instruction: instruction.trim() || null,
       });
+      startPolling(res.checklist_draft_id);
       connectChecklistSocket(res.checklist_draft_id);
     } catch (e) {
       setGenerating(false);
@@ -400,6 +469,11 @@ export default function AnalysisSetupPage() {
                         <h2 className="text-xl text-white/90">{formatChecklistStage(draftJob.stage)}</h2>
                       </div>
                       <p className="mt-3 text-sm text-white/45 max-w-3xl">{draftJob.message || "Preparing your checklist."}</p>
+                      {formatChecklistMeta(draftJob.meta) && (
+                        <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-white/35 max-w-3xl">
+                          {formatChecklistMeta(draftJob.meta)}
+                        </p>
+                      )}
                     </div>
                     <div className="border border-white/10 bg-white/[0.02] px-4 py-3 text-sm min-w-[220px]">
                       <div className="text-[10px] uppercase tracking-[0.16em] text-white/35">Draft Job</div>

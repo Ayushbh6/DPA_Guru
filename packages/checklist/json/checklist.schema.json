@@ -9,6 +9,20 @@
       "title": "ApprovalStatus",
       "type": "string"
     },
+    "ChecklistCategory": {
+      "enum": [
+        "Scope, Roles & Instructions",
+        "Subprocessors & Personnel",
+        "Security & Confidentiality",
+        "Data Subject Rights & Assistance",
+        "Incidents & Breach Notification",
+        "International Transfers & Localization",
+        "Retention, Deletion & Exit",
+        "Audit, Compliance & Liability"
+      ],
+      "title": "ChecklistCategory",
+      "type": "string"
+    },
     "ChecklistGovernance": {
       "additionalProperties": false,
       "properties": {
@@ -85,9 +99,8 @@
           "type": "string"
         },
         "category": {
-          "minLength": 1,
-          "title": "Category",
-          "type": "string"
+          "$ref": "#/$defs/ChecklistCategory",
+          "description": "One approved checklist category from the fixed DPA category taxonomy."
         },
         "legal_basis": {
           "items": {

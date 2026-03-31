@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from dpa_checklist.schema import (
+    ChecklistCategory,
     ChecklistDocument,
     ChecklistDraftOutput,
     ChecklistItem,
@@ -67,7 +68,7 @@ def _valid_checklist_payload() -> dict:
             {
                 "check_id": "CHECK_001",
                 "title": "Processor must follow controller instructions",
-                "category": "Instructions",
+                "category": ChecklistCategory.SCOPE_ROLES_AND_INSTRUCTIONS.value,
                 "legal_basis": ["Policy Section 1.1"],
                 "required": True,
                 "severity": "MANDATORY",
@@ -101,7 +102,7 @@ def _valid_checklist_draft_payload() -> dict:
             {
                 "check_id": "CHECK_001",
                 "title": "Processor must follow controller instructions",
-                "category": "Instructions",
+                "category": ChecklistCategory.SCOPE_ROLES_AND_INSTRUCTIONS.value,
                 "legal_basis": ["GDPR Article 28(3)(a)"],
                 "required": True,
                 "severity": "MANDATORY",
@@ -154,7 +155,7 @@ def test_checklist_schema_rejects_invalid_item() -> None:
             {
                 "check_id": "bad id",
                 "title": "Bad item",
-                "category": "Security",
+                "category": ChecklistCategory.SECURITY_AND_CONFIDENTIALITY.value,
                 "legal_basis": ["Policy Section 2.0"],
                 "required": True,
                 "severity": "CRITICAL",
@@ -200,7 +201,7 @@ def test_checklist_item_requires_sources() -> None:
             {
                 "check_id": "CHECK_999",
                 "title": "Synthetic check",
-                "category": "Security",
+                "category": ChecklistCategory.SECURITY_AND_CONFIDENTIALITY.value,
                 "legal_basis": ["Policy Section 2.0"],
                 "required": True,
                 "severity": "HIGH",

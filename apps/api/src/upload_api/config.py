@@ -100,6 +100,13 @@ class Settings:
     tokenizer_encoding: str
     openai_api_key: str | None
     openai_embedding_model: str
+    checklist_synthesis_strategy: str
+    checklist_synthesis_legacy_fallback: bool
+    checklist_synthesis_group_similarity_threshold: float
+    checklist_synthesis_group_merge_threshold: float
+    checklist_synthesis_group_max_neighbors: int
+    checklist_synthesis_group_max_size: int
+    checklist_synthesis_group_max_parallel: int
     gemini_api_key: str | None
     gemini_checklist_model: str
     gemini_review_model: str
@@ -180,6 +187,13 @@ def load_settings() -> Settings:
         tokenizer_encoding=os.getenv("TOKENIZER_ENCODING", "cl100k_base"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_embedding_model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+        checklist_synthesis_strategy=os.getenv("CHECKLIST_SYNTHESIS_STRATEGY", "category_groups_v1").strip().lower(),
+        checklist_synthesis_legacy_fallback=_env_bool("CHECKLIST_SYNTHESIS_LEGACY_FALLBACK", True),
+        checklist_synthesis_group_similarity_threshold=float(os.getenv("CHECKLIST_SYNTHESIS_GROUP_SIMILARITY_THRESHOLD", "0.90")),
+        checklist_synthesis_group_merge_threshold=float(os.getenv("CHECKLIST_SYNTHESIS_GROUP_MERGE_THRESHOLD", "0.92")),
+        checklist_synthesis_group_max_neighbors=int(os.getenv("CHECKLIST_SYNTHESIS_GROUP_MAX_NEIGHBORS", "2")),
+        checklist_synthesis_group_max_size=int(os.getenv("CHECKLIST_SYNTHESIS_GROUP_MAX_SIZE", "5")),
+        checklist_synthesis_group_max_parallel=int(os.getenv("CHECKLIST_SYNTHESIS_GROUP_MAX_PARALLEL", "4")),
         gemini_api_key=os.getenv("GEMINI_API_KEY"),
         gemini_checklist_model=os.getenv("GEMINI_CHECKLIST_MODEL", "gemini-3-flash-preview"),
         gemini_review_model=os.getenv("GEMINI_REVIEW_MODEL", "gemini-3-flash-preview"),

@@ -13,6 +13,13 @@ const CHECKLIST_STAGE_LABELS: Record<string, string> = {
   EXPANDING_SOURCE_CONTEXT: "Gathering Supporting Information",
   INSPECTING_DPA: "Reviewing Your Document",
   DRAFTING_CHECKLIST: "Drafting Your Checklist",
+  GROUPING_CATEGORIES: "Grouping By Category",
+  EMBEDDING_CHECKS: "Embedding Draft Checks",
+  FORMING_SEMANTIC_GROUPS: "Forming Semantic Groups",
+  VERIFYING_OVERLAPS: "Verifying Overlaps",
+  RESOLVING_GROUPS: "Resolving Semantic Groups",
+  MERGING_GROUPS: "Merging Groups",
+  FINALIZING_OUTPUT: "Finalizing Synthesis",
   VALIDATING_OUTPUT: "Finalizing Checklist",
   COMPLETED: "Completed",
   FAILED: "Failed",
@@ -21,6 +28,32 @@ const CHECKLIST_STAGE_LABELS: Record<string, string> = {
 function formatChecklistStage(stage: string | undefined) {
   if (!stage) return "Starting Checklist";
   return CHECKLIST_STAGE_LABELS[stage] || stage.replaceAll("_", " ");
+}
+
+function formatChecklistMeta(meta: Record<string, unknown> | null | undefined) {
+  if (!meta) return null;
+  const parts: string[] = [];
+  const groupsCompleted = typeof meta.semantic_groups_resolved === "number"
+    ? meta.semantic_groups_resolved
+    : typeof meta.merge_groups_completed === "number"
+      ? meta.merge_groups_completed
+      : null;
+  const groupsTotal = typeof meta.semantic_groups_total === "number"
+    ? meta.semantic_groups_total
+    : typeof meta.merge_groups_total === "number"
+      ? meta.merge_groups_total
+      : null;
+  const exactDuplicatesRemoved = typeof meta.exact_duplicates_removed === "number" ? meta.exact_duplicates_removed : null;
+  if (groupsCompleted != null && groupsTotal != null && groupsTotal > 0) {
+    parts.push(`Groups ${groupsCompleted}/${groupsTotal}`);
+  }
+  if (exactDuplicatesRemoved != null && exactDuplicatesRemoved > 0) {
+    parts.push(`Exact duplicates removed ${exactDuplicatesRemoved}`);
+  }
+  if (meta.fallback_used === true) {
+    parts.push("Legacy fallback used");
+  }
+  return parts.length ? parts.join(" • ") : null;
 }
 
 export default function SetupChecklistPage() {
@@ -36,6 +69,7 @@ export default function SetupChecklistPage() {
 
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [instructionOverride, setInstructionOverride] = useState<string | null>(null);
+  const [isStopping, setIsStopping] = useState(false);
 
   const document = detail?.document;
   const checklistDraft = detail?.checklist_draft;
@@ -98,11 +132,15 @@ export default function SetupChecklistPage() {
 
   async function handlePauseChecklist() {
     if (!checklistDraft?.checklist_draft_id || !isGenerating) return;
+    setWorkspaceError(null);
+    setIsStopping(true);
     try {
       const snapshot = await cancelChecklistDraft(checklistDraft.checklist_draft_id);
       setDetail((prev) => (prev ? { ...prev, checklist_draft: snapshot } : prev));
     } catch (error) {
-      setWorkspaceError(error instanceof Error ? error.message : "Failed to stop checklist generation.");
+      setWorkspaceError(error instanceof Error ? error.message : "Failed to stop this checklist run.");
+    } finally {
+      setIsStopping(false);
     }
   }
 
@@ -226,6 +264,11 @@ export default function SetupChecklistPage() {
                 <h2 className="text-xl" style={{ color: 'var(--text)' }}>{formatChecklistStage(checklistDraft.stage)}</h2>
               </div>
               <p className="mt-3 max-w-3xl text-sm" style={{ color: 'var(--text-3)' }}>{checklistDraft.message || "Preparing your checklist."}</p>
+              {formatChecklistMeta(checklistDraft.meta) && (
+                <p className="mt-2 max-w-3xl text-xs uppercase tracking-[0.14em]" style={{ color: 'var(--text-3)' }}>
+                  {formatChecklistMeta(checklistDraft.meta)}
+                </p>
+              )}
             </div>
             <div className="border px-4 py-3 text-sm min-w-[220px]" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)' }}>
               <div className="text-[11px] font-medium uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Draft Job</div>
@@ -266,10 +309,11 @@ export default function SetupChecklistPage() {
               <button
                 type="button"
                 onClick={() => void handlePauseChecklist()}
+                disabled={isStopping}
                 className="border px-4 py-2 text-sm transition-colors"
                 style={{ borderColor: 'var(--line)', color: 'var(--text-2)' }}
               >
-                Pause AI
+                {isStopping ? "Stopping Run" : "Stop Run"}
               </button>
             )}
             {checklistDraft?.status === "COMPLETED" && (

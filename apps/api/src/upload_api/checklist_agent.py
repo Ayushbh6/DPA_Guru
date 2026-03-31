@@ -7,18 +7,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from dpa_checklist import ChecklistDraftOutput
+from dpa_checklist import ChecklistDraftOutput, checklist_category_guidance_lines, checklist_category_values
 from google import genai
 from google.genai import types
 
 from .config import Settings
 from .kb_retrieval import KbVectorRetriever
+from .checklist_synthesis import (
+    CategoryGroupChecklistSynthesizer,
+    SynthesisCancelCallback,
+    SynthesisProgressCallback,
+    SynthesisTraceCallback,
+    SemanticGroupChecklistSynthesizer,
+    normalize_draft_output,
+)
 
 
 ProgressCallback = Callable[[str, str], None]
 
 _WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{1,}")
 _ANCHOR_MIN_LEN = 4
+_CATEGORY_ENUM_VALUES = checklist_category_values()
+_CATEGORY_GUIDANCE_BLOCK = "\n".join(checklist_category_guidance_lines())
 
 
 @dataclass(frozen=True)
@@ -134,7 +144,11 @@ def _gemini_response_schema() -> dict[str, Any]:
                     "properties": {
                         "check_id": {"type": "string"},
                         "title": {"type": "string"},
-                        "category": {"type": "string"},
+                        "category": {
+                            "type": "string",
+                            "enum": _CATEGORY_ENUM_VALUES,
+                            "description": "Choose exactly one approved DPA checklist category from the fixed taxonomy.",
+                        },
                         "legal_basis": {
                             "type": "array",
                             "items": {"type": "string"},
@@ -199,75 +213,72 @@ def _gemini_response_schema() -> dict[str, Any]:
     }
 
 
-def _checklist_tool_declarations() -> list[dict[str, Any]]:
+def _checklist_tool_declarations() -> list[types.Tool]:
     return [
-        {
-            "type": "function",
-            "name": "search_selected_kb",
-            "description": "Run hybrid retrieval over the selected KB sources and return the best matching excerpts.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "top_k": {"type": "integer"},
+        types.Tool(function_declarations=[
+            {
+                "name": "search_selected_kb",
+                "description": "Run hybrid retrieval over the selected KB sources and return the best matching excerpts.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "top_k": {"type": "integer"},
+                    },
+                    "required": ["query"],
                 },
-                "required": ["query"],
             },
-        },
-        {
-            "type": "function",
-            "name": "fetch_selected_source_context",
-            "description": "Fetch a larger excerpt from one selected KB source around an anchor term.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "source_id": {"type": "string"},
-                    "anchor": {"type": "string"},
-                    "window": {"type": "integer"},
+            {
+                "name": "fetch_selected_source_context",
+                "description": "Fetch a larger excerpt from one selected KB source around an anchor term.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "source_id": {"type": "string"},
+                        "anchor": {"type": "string"},
+                        "window": {"type": "integer"},
+                    },
+                    "required": ["source_id", "anchor"],
                 },
-                "required": ["source_id", "anchor"],
             },
-        },
-        {
-            "type": "function",
-            "name": "search_dpa",
-            "description": "Search the parsed DPA text for the most relevant pages or excerpts.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "top_k": {"type": "integer"},
+            {
+                "name": "search_dpa",
+                "description": "Search the parsed DPA text for the most relevant pages or excerpts.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "top_k": {"type": "integer"},
+                    },
+                    "required": ["query"],
                 },
-                "required": ["query"],
             },
-        },
-        {
-            "type": "function",
-            "name": "fetch_dpa_pages",
-            "description": "Fetch one or more full DPA pages by page range.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "start_page": {"type": "integer"},
-                    "end_page": {"type": "integer"},
+            {
+                "name": "fetch_dpa_pages",
+                "description": "Fetch one or more full DPA pages by page range.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "start_page": {"type": "integer"},
+                        "end_page": {"type": "integer"},
+                    },
+                    "required": ["start_page", "end_page"],
                 },
-                "required": ["start_page", "end_page"],
             },
-        },
-        {
-            "type": "function",
-            "name": "fetch_dpa_excerpt",
-            "description": "Fetch a focused excerpt from a specific DPA page around an anchor text.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "page": {"type": "integer"},
-                    "anchor_text": {"type": "string"},
-                    "window": {"type": "integer"},
+            {
+                "name": "fetch_dpa_excerpt",
+                "description": "Fetch a focused excerpt from a specific DPA page around an anchor text.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "page": {"type": "integer"},
+                        "anchor_text": {"type": "string"},
+                        "window": {"type": "integer"},
+                    },
+                    "required": ["page", "anchor_text"],
                 },
-                "required": ["page", "anchor_text"],
             },
-        },
+        ])
     ]
 
 
@@ -275,6 +286,8 @@ class ChecklistDraftAgent:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._kb_retriever = KbVectorRetriever(settings)
+        self._semantic_group_synthesizer = SemanticGroupChecklistSynthesizer(settings)
+        self._category_group_synthesizer = CategoryGroupChecklistSynthesizer(settings)
 
     def generate(
         self,
@@ -333,8 +346,6 @@ class ChecklistDraftAgent:
             progress_cb("DRAFTING_CHECKLIST", "Preparing the checklist draft.")
 
         with genai.Client(api_key=self._settings.gemini_api_key) as client:
-            tools_list = _checklist_tool_declarations()
-            
             tools_map = {
                 "search_selected_kb": toolset.search_selected_kb,
                 "fetch_selected_source_context": toolset.fetch_selected_source_context,
@@ -343,76 +354,79 @@ class ChecklistDraftAgent:
                 "fetch_dpa_excerpt": toolset.fetch_dpa_excerpt,
             }
 
-            final_text = None
-            previous_interaction_id: str | None = None
-            pending_input: Any = [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "\n\n".join(contents)}]
-                }
+            config = types.GenerateContentConfig(
+                system_instruction=_SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema=_gemini_response_schema(),
+                temperature=0.0,
+                thinking_config=types.ThinkingConfig(thinking_budget=1024),
+                tools=_checklist_tool_declarations(),
+            )
+
+            history: list[types.Content] = [
+                types.Content(role="user", parts=[types.Part(text="\n\n".join(contents))])
             ]
+
+            final_text = None
             for iteration in range(15):
-                response = client.interactions.create(
+                response = client.models.generate_content(
                     model=self._settings.gemini_checklist_model,
-                    input=pending_input,
-                    previous_interaction_id=previous_interaction_id,
-                    tools=tools_list,
-                    system_instruction=_SYSTEM_PROMPT,
-                    response_format=_gemini_response_schema(),
-                    generation_config={
-                        "temperature": 0,
-                        "thinking_level": "low",
-                        "thinking_summaries": "none"
-                    }
+                    contents=history,
+                    config=config,
                 )
-                previous_interaction_id = response.id
-                
-                function_calls = [out for out in response.outputs if out.type == "function_call"]
-                
-                if function_calls:
+
+                parts = response.candidates[0].content.parts
+                fc_parts = [p for p in parts if p.function_call]
+
+                if fc_parts:
                     if progress_cb:
-                        first_call = function_calls[0].name
+                        first_call = fc_parts[0].function_call.name
                         if first_call in {"search_selected_kb", "fetch_selected_source_context"}:
                             progress_cb("DRAFTING_CHECKLIST", "Gathering supporting information from the selected references.")
                         elif first_call in {"search_dpa", "fetch_dpa_pages", "fetch_dpa_excerpt"}:
                             progress_cb("DRAFTING_CHECKLIST", "Reviewing the document for the most relevant sections.")
                         else:
                             progress_cb("DRAFTING_CHECKLIST", "Organizing the information needed for the checklist.")
-                    
-                    tool_results = []
-                    for function_call in function_calls:
-                        name = function_call.name
-                        args = function_call.arguments
-                        
+
+                    history.append(response.candidates[0].content)
+
+                    tool_response_parts: list[types.Part] = []
+                    for part in fc_parts:
+                        fc = part.function_call
+                        name = fc.name
+                        args = dict(fc.args) if fc.args else {}
+
                         if name in tools_map:
                             try:
                                 result = tools_map[name](**args)
-                                tool_results.append({
-                                    "type": "function_result",
-                                    "name": name,
-                                    "call_id": function_call.id,
-                                    "result": result
-                                })
+                                tool_response_parts.append(
+                                    types.Part(function_response=types.FunctionResponse(
+                                        name=name,
+                                        response={"result": result},
+                                        id=fc.id,
+                                    ))
+                                )
                             except Exception as e:
-                                tool_results.append({
-                                    "type": "function_result",
-                                    "name": name,
-                                    "call_id": function_call.id,
-                                    "result": json.dumps({"error": str(e)})
-                                })
+                                tool_response_parts.append(
+                                    types.Part(function_response=types.FunctionResponse(
+                                        name=name,
+                                        response={"error": str(e)},
+                                        id=fc.id,
+                                    ))
+                                )
                         else:
-                            tool_results.append({
-                                "type": "function_result",
-                                "name": name,
-                                "call_id": function_call.id,
-                                "result": json.dumps({"error": f"Unknown tool: {name}"})
-                            })
-                    pending_input = tool_results
+                            tool_response_parts.append(
+                                types.Part(function_response=types.FunctionResponse(
+                                    name=name,
+                                    response={"error": f"Unknown tool: {name}"},
+                                    id=fc.id,
+                                ))
+                            )
+                    history.append(types.Content(role="user", parts=tool_response_parts))
                     continue
                 else:
-                    text_outputs = [out for out in response.outputs if out.type == "text"]
-                    if text_outputs:
-                        final_text = "".join([out.text for out in text_outputs if out.text])
+                    if response.text:
+                        final_text = response.text
                     break
 
         if not final_text:
@@ -421,11 +435,11 @@ class ChecklistDraftAgent:
         if progress_cb:
             progress_cb("VALIDATING_OUTPUT", "Finalizing the checklist.")
 
-        payload = ChecklistDraftOutput.model_validate_json(final_text)
+        payload = normalize_draft_output(ChecklistDraftOutput.model_validate_json(final_text))
 
         return _normalize_check_ids(payload)
 
-    def synthesize_drafts(
+    def synthesize_drafts_legacy(
         self,
         drafts: list[ChecklistDraftOutput],
         user_instruction: str | None = None,
@@ -470,7 +484,7 @@ class ChecklistDraftAgent:
         if not response.text:
             raise RuntimeError("Gemini did not return structured output for synthesis.")
 
-        payload = ChecklistDraftOutput.model_validate_json(response.text)
+        payload = normalize_draft_output(ChecklistDraftOutput.model_validate_json(response.text))
         
         all_sources = set()
         for draft in drafts:
@@ -478,6 +492,68 @@ class ChecklistDraftAgent:
         payload.meta.selected_source_ids = sorted(list(all_sources))
         
         return _normalize_check_ids(payload)
+
+    def synthesize_drafts_semantic_groups(
+        self,
+        drafts: list[ChecklistDraftOutput],
+        user_instruction: str | None = None,
+        progress_cb: SynthesisProgressCallback | None = None,
+        trace_cb: SynthesisTraceCallback | None = None,
+        cancel_check: SynthesisCancelCallback | None = None,
+    ) -> ChecklistDraftOutput:
+        payload = self._semantic_group_synthesizer.synthesize(
+            drafts=drafts,
+            user_instruction=user_instruction,
+            progress_cb=progress_cb,
+            trace_cb=trace_cb,
+            cancel_check=cancel_check,
+        )
+        return _normalize_check_ids(payload)
+
+    def synthesize_drafts_category_groups(
+        self,
+        drafts: list[ChecklistDraftOutput],
+        user_instruction: str | None = None,
+        progress_cb: SynthesisProgressCallback | None = None,
+        trace_cb: SynthesisTraceCallback | None = None,
+        cancel_check: SynthesisCancelCallback | None = None,
+    ) -> ChecklistDraftOutput:
+        payload = self._category_group_synthesizer.synthesize(
+            drafts=drafts,
+            user_instruction=user_instruction,
+            progress_cb=progress_cb,
+            trace_cb=trace_cb,
+            cancel_check=cancel_check,
+        )
+        return _normalize_check_ids(payload)
+
+    def synthesize_drafts_verified(
+        self,
+        drafts: list[ChecklistDraftOutput],
+        user_instruction: str | None = None,
+        progress_cb: SynthesisProgressCallback | None = None,
+        trace_cb: SynthesisTraceCallback | None = None,
+        cancel_check: SynthesisCancelCallback | None = None,
+    ) -> ChecklistDraftOutput:
+        return self.synthesize_drafts_category_groups(
+            drafts,
+            user_instruction=user_instruction,
+            progress_cb=progress_cb,
+            trace_cb=trace_cb,
+            cancel_check=cancel_check,
+        )
+
+    def synthesize_drafts(
+        self,
+        drafts: list[ChecklistDraftOutput],
+        user_instruction: str | None = None,
+        progress_cb: ProgressCallback | None = None,
+    ) -> ChecklistDraftOutput:
+        return self.synthesize_drafts_legacy(
+            drafts,
+            user_instruction=user_instruction,
+            progress_cb=progress_cb,
+        )
 
     def _load_sources(self, selected_source_ids: list[str]) -> list[SourceRecord]:
         manifest_path = self._settings.repo_root / "kb" / "manifest.json"
@@ -731,11 +807,16 @@ Rules:
 - If a user request is not clearly supported by the selected sources, reflect that uncertainty in open_questions or draft_rationale.
 - Every checklist item must be specific, source-backed, and actionable for later review.
 - Keep titles concise and professional.
+- Every checklist item must use exactly one category from the allowed category taxonomy below.
+- Do not invent, rename, abbreviate, or combine category labels outside the allowed list.
 - legal_basis should cite the relevant article/section names or source references when visible in the selected-source context.
 - evidence_hint should tell the later review agent what clause to look for in the DPA.
 - pass_criteria and fail_criteria should be concrete and auditable.
 - sources must only reference the selected KB sources.
 - Do not include commentary outside the schema.
+
+Allowed categories:
+{category_guidance}
 
 Tool usage instructions:
 - Use `search_selected_kb` as your primary discovery tool for legal obligations.
@@ -755,4 +836,4 @@ Recommended working pattern:
 3. Draft the source-backed checklist item.
 4. Inspect the DPA only to tailor wording, emphasis, and open questions.
 5. Repeat until the selected-source coverage is broad and deduplicated.
-""".strip()
+""".strip().format(category_guidance=_CATEGORY_GUIDANCE_BLOCK)

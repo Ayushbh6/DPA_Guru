@@ -40,6 +40,13 @@ ChecklistDraftStage = Literal[
     "INSPECTING_DPA",
     "DRAFTING_CHECKLIST",
     "SYNTHESIZING",
+    "GROUPING_CATEGORIES",
+    "EMBEDDING_CHECKS",
+    "FORMING_SEMANTIC_GROUPS",
+    "VERIFYING_OVERLAPS",
+    "RESOLVING_GROUPS",
+    "MERGING_GROUPS",
+    "FINALIZING_OUTPUT",
     "VALIDATING_OUTPUT",
     "COMPLETED",
     "FAILED",
@@ -209,6 +216,7 @@ class ChecklistDraftSnapshot(BaseModel):
     message: str | None = None
     selected_source_ids: list[str]
     user_instruction: str | None = None
+    meta: dict[str, Any] | None = Field(default=None)
     result: ChecklistDraftOutput | None = None
     error_code: str | None = None
     error_message: str | None = None

@@ -10,6 +10,7 @@ from typing import Any
 from dpa_checklist import ChecklistDocument, ChecklistItem
 from dpa_schemas import CheckAssessmentOutput, ReviewSynthesisOutput
 from google import genai
+from google.genai import types
 
 from .config import Settings
 from .document_retrieval import DocumentVectorRetriever, DpaPageRecord, RetrievedDpaSpan
@@ -228,47 +229,46 @@ def _normalize_assessment_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _review_tool_declarations() -> list[dict[str, Any]]:
+def _review_tool_declarations() -> list[types.Tool]:
     return [
-        {
-            "type": "function",
-            "name": "fetch_selected_source_context",
-            "description": "Fetch a larger excerpt from one selected KB source around an anchor term.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "source_id": {"type": "string"},
-                    "anchor": {"type": "string"},
-                    "window": {"type": "integer"},
+        types.Tool(function_declarations=[
+            {
+                "name": "fetch_selected_source_context",
+                "description": "Fetch a larger excerpt from one selected KB source around an anchor term.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "source_id": {"type": "string"},
+                        "anchor": {"type": "string"},
+                        "window": {"type": "integer"},
+                    },
+                    "required": ["source_id", "anchor"],
                 },
-                "required": ["source_id", "anchor"],
             },
-        },
-        {
-            "type": "function",
-            "name": "fetch_dpa_span",
-            "description": "Fetch the full stored DPA span for a known provenance id.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "provenance_id": {"type": "string"},
+            {
+                "name": "fetch_dpa_span",
+                "description": "Fetch the full stored DPA span for a known provenance id.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "provenance_id": {"type": "string"},
+                    },
+                    "required": ["provenance_id"],
                 },
-                "required": ["provenance_id"],
             },
-        },
-        {
-            "type": "function",
-            "name": "fetch_dpa_pages",
-            "description": "Fetch one or more full DPA pages by page range.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "start_page": {"type": "integer"},
-                    "end_page": {"type": "integer"},
+            {
+                "name": "fetch_dpa_pages",
+                "description": "Fetch one or more full DPA pages by page range.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "start_page": {"type": "integer"},
+                        "end_page": {"type": "integer"},
+                    },
+                    "required": ["start_page", "end_page"],
                 },
-                "required": ["start_page", "end_page"],
             },
-        },
+        ])
     ]
 
 
@@ -370,67 +370,76 @@ class ReviewAgent:
         ]
 
         with genai.Client(api_key=self._settings.gemini_api_key) as client:
-            tools_list = _review_tool_declarations()
             tools_map = {
                 "fetch_selected_source_context": toolset.fetch_selected_source_context,
                 "fetch_dpa_span": toolset.fetch_dpa_span,
                 "fetch_dpa_pages": toolset.fetch_dpa_pages,
             }
+
+            config = types.GenerateContentConfig(
+                system_instruction=_REVIEW_SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema=_check_assessment_schema(),
+                temperature=0.0,
+                thinking_config=types.ThinkingConfig(thinking_budget=1024),
+                tools=_review_tool_declarations(),
+            )
+
+            history: list[types.Content] = [
+                types.Content(role="user", parts=[types.Part(text="\n\n".join(contents))])
+            ]
+
             final_text = None
-            previous_interaction_id: str | None = None
-            pending_input: Any = [{"role": "user", "content": [{"type": "text", "text": "\n\n".join(contents)}]}]
-
             for _ in range(10):
-                response = client.interactions.create(
+                response = client.models.generate_content(
                     model=self._settings.gemini_review_model,
-                    input=pending_input,
-                    previous_interaction_id=previous_interaction_id,
-                    tools=tools_list,
-                    system_instruction=_REVIEW_SYSTEM_PROMPT,
-                    response_format=_check_assessment_schema(),
-                    generation_config={
-                        "temperature": 0,
-                        "thinking_level": "low",
-                        "thinking_summaries": "none"
-                    }
+                    contents=history,
+                    config=config,
                 )
-                previous_interaction_id = response.id
 
-                function_calls = [out for out in response.outputs if out.type == "function_call"]
-                if function_calls:
-                    tool_results = []
-                    for function_call in function_calls:
-                        name = function_call.name
-                        args = function_call.arguments
+                parts = response.candidates[0].content.parts
+                fc_parts = [p for p in parts if p.function_call]
+
+                if fc_parts:
+                    history.append(response.candidates[0].content)
+
+                    tool_response_parts: list[types.Part] = []
+                    for part in fc_parts:
+                        fc = part.function_call
+                        name = fc.name
+                        args = dict(fc.args) if fc.args else {}
+
                         if name in tools_map:
                             try:
                                 result = tools_map[name](**args)
-                                tool_results.append({
-                                    "type": "function_result",
-                                    "name": name,
-                                    "call_id": function_call.id,
-                                    "result": result
-                                })
+                                tool_response_parts.append(
+                                    types.Part(function_response=types.FunctionResponse(
+                                        name=name,
+                                        response={"result": result},
+                                        id=fc.id,
+                                    ))
+                                )
                             except Exception as exc:
-                                tool_results.append({
-                                    "type": "function_result",
-                                    "name": name,
-                                    "call_id": function_call.id,
-                                    "result": json.dumps({"error": str(exc)})
-                                })
+                                tool_response_parts.append(
+                                    types.Part(function_response=types.FunctionResponse(
+                                        name=name,
+                                        response={"error": str(exc)},
+                                        id=fc.id,
+                                    ))
+                                )
                         else:
-                            tool_results.append({
-                                "type": "function_result",
-                                "name": name,
-                                "call_id": function_call.id,
-                                "result": json.dumps({"error": f"Unknown tool: {name}"})
-                            })
-                    pending_input = tool_results
+                            tool_response_parts.append(
+                                types.Part(function_response=types.FunctionResponse(
+                                    name=name,
+                                    response={"error": f"Unknown tool: {name}"},
+                                    id=fc.id,
+                                ))
+                            )
+                    history.append(types.Content(role="user", parts=tool_response_parts))
                     continue
 
-                text_outputs = [out for out in response.outputs if out.type == "text"]
-                if text_outputs:
-                    final_text = "".join([out.text for out in text_outputs if out.text])
+                if response.text:
+                    final_text = response.text
                 break
 
         if not final_text:
@@ -459,23 +468,22 @@ class ReviewAgent:
             json.dumps([item.model_dump(mode="json") for item in assessments], indent=2),
         ]
         with genai.Client(api_key=self._settings.gemini_api_key) as client:
-            response = client.interactions.create(
+            response = client.models.generate_content(
                 model=self._settings.gemini_review_model,
-                input="\n\n".join(contents),
-                system_instruction=_SYNTHESIS_SYSTEM_PROMPT,
-                response_format=_review_synthesis_schema(),
-                generation_config={
-                    "temperature": 0,
-                    "thinking_level": "low",
-                    "thinking_summaries": "none"
-                }
+                contents="\n\n".join(contents),
+                config=types.GenerateContentConfig(
+                    system_instruction=_SYNTHESIS_SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    response_schema=_review_synthesis_schema(),
+                    temperature=0.0,
+                    thinking_config=types.ThinkingConfig(thinking_budget=1024),
+                ),
             )
-            
-            text_outputs = [out for out in response.outputs if out.type == "text"]
-            if not text_outputs:
+
+            if not response.text:
                 raise RuntimeError("Gemini did not return synthesis output.")
-            
-            final_text = "".join([out.text for out in text_outputs if out.text])
+
+            final_text = response.text
         return ReviewSynthesisOutput.model_validate_json(final_text)
 
     def _prefetch_kb_hits(self, *, query: str, sources: list[SourceRecord], top_k: int) -> list[RetrievedKbChunk]:

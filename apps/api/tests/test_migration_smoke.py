@@ -47,6 +47,8 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                     "document_artifacts",
                     "document_parse_jobs",
                     "checklist_draft_jobs",
+                    "checklist_synthesis_runs",
+                    "checklist_synthesis_events",
                     "approved_checklists",
                     "document_chunks",
                     "analysis_runs",
@@ -114,6 +116,8 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 assert "document_artifacts_tenant_created_idx" in idx_names
                 assert "document_parse_jobs_project_created_idx" in idx_names
                 assert "checklist_draft_jobs_project_created_idx" in idx_names
+                assert "checklist_synthesis_runs_draft_started_idx" in idx_names
+                assert "checklist_synthesis_events_run_created_idx" in idx_names
                 assert "analysis_runs_project_started_idx" in idx_names
                 assert "approved_checklists_project_created_idx" in idx_names
                 assert "analysis_runs_status_started_idx" in idx_names
@@ -127,7 +131,7 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                           'tenants', 'users', 'documents', 'document_chunks',
                           'document_artifacts',
                           'projects', 'document_parse_jobs', 'checklist_draft_jobs', 'analysis_runs', 'findings', 'rule_hits',
-                          'review_actions', 'billing_events', 'audit_events'
+                          'review_actions', 'billing_events', 'audit_events', 'checklist_synthesis_runs', 'checklist_synthesis_events'
                         )
                         """
                     )

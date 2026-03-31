@@ -23,6 +23,8 @@ from db.models import (
     AuditEvent,
     ApprovedChecklist,
     ChecklistDraftJob,
+    ChecklistSynthesisEvent,
+    ChecklistSynthesisRun,
     Document,
     DocumentArtifact,
     DocumentChunk,
@@ -34,6 +36,7 @@ from db.models import (
 from dpa_checklist import ApprovalStatus, ChecklistDocument, ChecklistDraftOutput, ChecklistGovernance
 
 from .checklist_agent import ChecklistDraftAgent
+from .checklist_synthesis import ChecklistSynthesisCanceledError
 from .config import Settings
 from .document_retrieval import DpaPageRecord, DocumentChunkIndexer, derive_evidence_metadata
 from .events import JobEventBus
@@ -93,7 +96,13 @@ CHECKLIST_STAGE_PROGRESS = {
     "INSPECTING_DPA": 50,
     "DRAFTING_CHECKLIST": 74,
     "SYNTHESIZING": 84,
-    "VALIDATING_OUTPUT": 92,
+    "GROUPING_CATEGORIES": 82,
+    "EMBEDDING_CHECKS": 80,
+    "VERIFYING_OVERLAPS": 84,
+    "RESOLVING_GROUPS": 88,
+    "MERGING_GROUPS": 92,
+    "FINALIZING_OUTPUT": 96,
+    "VALIDATING_OUTPUT": 98,
     "COMPLETED": 100,
     "FAILED": 100,
 }
@@ -1113,6 +1122,7 @@ class UploadPipelineService:
             message=job.message,
             selected_source_ids=list(job.selected_source_ids or []),
             user_instruction=job.user_instruction,
+            meta=job.meta_json,
             result=result,
             error_code=job.error_code,
             error_message=job.error_message,
@@ -2157,6 +2167,28 @@ class UploadPipelineService:
             status_url=f"/v1/checklist-drafts/{created_draft_id}",
         )
 
+    def should_bypass_checklist_rate_limit_after_cancel(
+        self,
+        document_id: uuid.UUID,
+        actor_username: str,
+        window_seconds: int,
+    ) -> bool:
+        with self.session_factory() as session:
+            project, document = self._require_owned_document(
+                session,
+                document_id=document_id,
+                actor_username=actor_username,
+            )
+            latest_job = self._latest_checklist_job_for_project(session, project.id)
+            if latest_job is None:
+                return False
+            if latest_job.document_id != document.id:
+                return False
+            if latest_job.status != "FAILED" or latest_job.error_code != "UserCanceled":
+                return False
+            finished_at = latest_job.completed_at or latest_job.updated_at or latest_job.created_at
+            return finished_at >= utcnow() - timedelta(seconds=window_seconds)
+
     def _create_checklist_draft_job(
         self,
         draft_id: uuid.UUID,
@@ -2275,18 +2307,112 @@ class UploadPipelineService:
         if len(results) == 1:
             result = results[0]
         else:
-            await self._transition_checklist_job(
+            strategy = self._normalize_checklist_synthesis_strategy(self.settings.checklist_synthesis_strategy)
+            synthesis_run_id = await asyncio.to_thread(
+                self._start_checklist_synthesis_run_sync,
                 draft_id,
-                stage="SYNTHESIZING",
-                message="Merging partial checklists into final draft.",
-            )
-            result = await asyncio.to_thread(
-                self.checklist_agent.synthesize_drafts,
-                results,
-                record["user_instruction"],
-                progress_cb,
+                strategy,
+                len(results),
             )
 
+            def synthesis_progress_cb(
+                stage: str,
+                message: str,
+                meta: dict[str, Any] | None = None,
+                progress_pct: int | None = None,
+            ) -> None:
+                if meta:
+                    self._update_checklist_synthesis_run_sync(
+                        synthesis_run_id,
+                        counts=self._extract_synthesis_counts(meta),
+                    )
+                fut = asyncio.run_coroutine_threadsafe(
+                    self._transition_checklist_job(
+                        draft_id,
+                        stage=stage,
+                        message=message,
+                        progress_pct=progress_pct,
+                        meta_merge=meta,
+                    ),
+                    loop,
+                )
+                fut.result()
+
+            def synthesis_trace_cb(event_type: str, payload: dict[str, Any]) -> None:
+                self._append_checklist_synthesis_event_sync(synthesis_run_id, event_type, payload)
+
+            await self._transition_checklist_job(
+                draft_id,
+                stage=(
+                    "SYNTHESIZING"
+                    if strategy == "legacy"
+                    else "GROUPING_CATEGORIES"
+                    if strategy == "category_groups_v1"
+                    else "EMBEDDING_CHECKS"
+                ),
+                message="Preparing checklist synthesis.",
+                meta_merge={
+                    "synthesis_strategy": strategy,
+                    "fallback_used": False,
+                    "partial_drafts_total": len(results),
+                    "current_substage": (
+                        "SYNTHESIZING"
+                        if strategy == "legacy"
+                        else "GROUPING_CATEGORIES"
+                        if strategy == "category_groups_v1"
+                        else "EMBEDDING_CHECKS"
+                    ),
+                },
+            )
+            try:
+                result, fallback_used = await asyncio.to_thread(
+                    self._synthesize_checklist_drafts_sync,
+                    draft_id,
+                    results,
+                    record["user_instruction"],
+                    synthesis_progress_cb,
+                    synthesis_trace_cb,
+                )
+            except ChecklistSynthesisCanceledError as exc:
+                await asyncio.to_thread(
+                    self._update_checklist_synthesis_run_sync,
+                    synthesis_run_id,
+                    status="FAILED",
+                    error_message=str(exc),
+                    completed=True,
+                )
+                return
+            except Exception as exc:
+                await asyncio.to_thread(
+                    self._update_checklist_synthesis_run_sync,
+                    synthesis_run_id,
+                    status="FAILED",
+                    error_message=str(exc),
+                    completed=True,
+                )
+                raise
+            await asyncio.to_thread(
+                self._update_checklist_synthesis_run_sync,
+                synthesis_run_id,
+                status="COMPLETED",
+                fallback_used=fallback_used,
+                completed=True,
+            )
+            if fallback_used:
+                await self._transition_checklist_job(
+                    draft_id,
+                    stage="FINALIZING_OUTPUT",
+                    message="Legacy synthesis fallback completed. Finalizing output.",
+                    meta_merge={
+                        "synthesis_strategy": strategy,
+                        "fallback_used": True,
+                        "current_substage": "FINALIZING_OUTPUT",
+                    },
+                    progress_pct=96,
+                )
+
+        if await asyncio.to_thread(self._is_checklist_draft_cancelled_sync, draft_id):
+            return
         finalized = await asyncio.to_thread(self._finalize_checklist_success, draft_id, result)
         if not finalized:
             return
@@ -2295,6 +2421,7 @@ class UploadPipelineService:
             status="COMPLETED",
             stage="COMPLETED",
             message="Checklist is ready for review.",
+            meta_merge={"current_substage": "COMPLETED"},
         )
 
     def _generate_checklist_with_local_artifacts(
@@ -2321,6 +2448,244 @@ class UploadPipelineService:
                 parsed_pages_path=None,
                 progress_cb=progress_cb,
             )
+
+    def _synthesize_checklist_drafts_sync(
+        self,
+        draft_id: uuid.UUID,
+        results: list[ChecklistDraftOutput],
+        user_instruction: str | None,
+        progress_cb,
+        trace_cb,
+    ) -> tuple[ChecklistDraftOutput, bool]:
+        strategy = self._normalize_checklist_synthesis_strategy(self.settings.checklist_synthesis_strategy)
+        if strategy == "category_groups_v1":
+            try:
+                trace_cb(
+                    "strategy_selected",
+                    {"strategy_version": "category_groups_v1", "partial_drafts_total": len(results)},
+                )
+                return (
+                    self.checklist_agent.synthesize_drafts_category_groups(
+                        results,
+                        user_instruction=user_instruction,
+                        progress_cb=progress_cb,
+                        trace_cb=trace_cb,
+                        cancel_check=lambda: self._is_checklist_draft_cancelled_sync(draft_id),
+                    ),
+                    False,
+                )
+            except ChecklistSynthesisCanceledError:
+                trace_cb(
+                    "strategy_cancelled",
+                    {"strategy_version": "category_groups_v1"},
+                )
+                raise
+            except Exception as exc:
+                trace_cb(
+                    "strategy_failed",
+                    {
+                        "strategy_version": "category_groups_v1",
+                        "error": str(exc),
+                    },
+                )
+                if not self.settings.checklist_synthesis_legacy_fallback:
+                    raise
+                progress_cb(
+                    "SYNTHESIZING",
+                    "Category-group synthesis failed. Falling back to legacy synthesis.",
+                    {
+                        "current_substage": "SYNTHESIZING",
+                        "fallback_used": True,
+                    },
+                    84,
+                )
+                trace_cb(
+                    "legacy_fallback",
+                    {"from_strategy": "category_groups_v1", "fallback_strategy": "legacy"},
+                )
+                return (
+                    self.checklist_agent.synthesize_drafts_legacy(
+                        results,
+                        user_instruction=user_instruction,
+                    ),
+                    True,
+                )
+        if strategy == "semantic_groups_v2":
+            try:
+                trace_cb(
+                    "strategy_selected",
+                    {"strategy_version": "semantic_groups_v2", "partial_drafts_total": len(results)},
+                )
+                return (
+                    self.checklist_agent.synthesize_drafts_semantic_groups(
+                        results,
+                        user_instruction=user_instruction,
+                        progress_cb=progress_cb,
+                        trace_cb=trace_cb,
+                        cancel_check=lambda: self._is_checklist_draft_cancelled_sync(draft_id),
+                    ),
+                    False,
+                )
+            except ChecklistSynthesisCanceledError:
+                trace_cb(
+                    "strategy_cancelled",
+                    {"strategy_version": "semantic_groups_v2"},
+                )
+                raise
+            except Exception as exc:
+                trace_cb(
+                    "strategy_failed",
+                    {
+                        "strategy_version": "semantic_groups_v2",
+                        "error": str(exc),
+                    },
+                )
+                if not self.settings.checklist_synthesis_legacy_fallback:
+                    raise
+                progress_cb(
+                    "SYNTHESIZING",
+                    "Verified clustering failed. Falling back to legacy synthesis.",
+                    {
+                        "current_substage": "SYNTHESIZING",
+                        "fallback_used": True,
+                    },
+                    84,
+                )
+                trace_cb(
+                    "legacy_fallback",
+                    {"from_strategy": "semantic_groups_v2", "fallback_strategy": "legacy"},
+                )
+                return (
+                    self.checklist_agent.synthesize_drafts_legacy(
+                        results,
+                        user_instruction=user_instruction,
+                    ),
+                    True,
+                )
+
+        trace_cb(
+            "strategy_selected",
+            {"strategy_version": "legacy", "partial_drafts_total": len(results)},
+        )
+        progress_cb(
+            "SYNTHESIZING",
+            "Merging partial checklists into final draft.",
+            {
+                "current_substage": "SYNTHESIZING",
+                "partial_drafts_total": len(results),
+                "fallback_used": False,
+            },
+            84,
+        )
+        return (
+            self.checklist_agent.synthesize_drafts_legacy(
+                results,
+                user_instruction=user_instruction,
+            ),
+            False,
+        )
+
+    def _start_checklist_synthesis_run_sync(
+        self,
+        draft_id: uuid.UUID,
+        strategy_version: str,
+        partial_drafts_total: int,
+    ) -> uuid.UUID:
+        with self.session_factory() as session:
+            run = ChecklistSynthesisRun(
+                checklist_draft_id=draft_id,
+                strategy_version=strategy_version,
+                status="RUNNING",
+                partial_drafts_total=partial_drafts_total,
+                started_at=utcnow(),
+            )
+            session.add(run)
+            session.commit()
+            return run.id
+
+    def _update_checklist_synthesis_run_sync(
+        self,
+        run_id: uuid.UUID,
+        *,
+        counts: dict[str, int] | None = None,
+        status: str | None = None,
+        fallback_used: bool | None = None,
+        error_message: str | None = None,
+        completed: bool = False,
+    ) -> None:
+        with self.session_factory() as session:
+            run = session.get(ChecklistSynthesisRun, run_id)
+            if run is None:
+                return
+            if counts:
+                for field, value in counts.items():
+                    if hasattr(run, field):
+                        setattr(run, field, value)
+            if status is not None:
+                run.status = status
+            if fallback_used is not None:
+                run.fallback_used = fallback_used
+            if error_message is not None:
+                run.error_message = error_message
+            if completed:
+                run.completed_at = utcnow()
+            session.commit()
+
+    def _append_checklist_synthesis_event_sync(
+        self,
+        run_id: uuid.UUID,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        with self.session_factory() as session:
+            next_sequence = (
+                session.execute(
+                    select(func.coalesce(func.max(ChecklistSynthesisEvent.sequence_no), 0) + 1)
+                    .where(ChecklistSynthesisEvent.synthesis_run_id == run_id)
+                ).scalar_one()
+            )
+            session.add(
+                ChecklistSynthesisEvent(
+                    synthesis_run_id=run_id,
+                    sequence_no=int(next_sequence),
+                    event_type=event_type,
+                    payload_json=payload,
+                )
+            )
+            session.commit()
+
+    @staticmethod
+    def _extract_synthesis_counts(meta: dict[str, Any]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for source_field, target_field in (
+            ("partial_drafts_total", "partial_drafts_total"),
+            ("candidate_checks_total", "candidate_checks_total"),
+            ("candidate_pairs_total", "candidate_pairs_total"),
+            ("candidate_pairs_verified", "candidate_pairs_verified"),
+            ("semantic_groups_total", "merge_groups_total"),
+            ("semantic_groups_resolved", "merge_groups_completed"),
+            ("merge_groups_total", "merge_groups_total"),
+            ("merge_groups_completed", "merge_groups_completed"),
+        ):
+            value = meta.get(source_field)
+            if isinstance(value, int):
+                counts[target_field] = value
+        return counts
+
+    @staticmethod
+    def _normalize_checklist_synthesis_strategy(strategy: str | None) -> str:
+        normalized = (strategy or "").strip().lower()
+        if normalized in {"legacy", "semantic_groups_v2", "category_groups_v1"}:
+            return normalized
+        logging.warning("Unknown checklist synthesis strategy '%s'; using legacy.", strategy)
+        return "legacy"
+
+    def _is_checklist_draft_cancelled_sync(self, draft_id: uuid.UUID) -> bool:
+        with self.session_factory() as session:
+            job = session.get(ChecklistDraftJob, draft_id)
+            if job is None:
+                return False
+            return job.status == "FAILED" and job.error_code == "UserCanceled"
 
     def _get_checklist_job_record(self, draft_id: uuid.UUID) -> dict[str, Any] | None:
         with self.session_factory() as session:
@@ -2356,9 +2721,13 @@ class UploadPipelineService:
         status: str | None = None,
         stage: str,
         message: str | None = None,
+        progress_pct: int | None = None,
+        meta_merge: dict[str, Any] | None = None,
     ) -> None:
-        progress_pct = await asyncio.to_thread(self._resolve_checklist_progress_sync, draft_id, stage)
-        await asyncio.to_thread(self._touch_checklist_job_sync, draft_id, status, stage, progress_pct, message)
+        resolved_progress = progress_pct
+        if resolved_progress is None:
+            resolved_progress = await asyncio.to_thread(self._resolve_checklist_progress_sync, draft_id, stage)
+        await asyncio.to_thread(self._touch_checklist_job_sync, draft_id, status, stage, resolved_progress, message, meta_merge)
         snapshot = await asyncio.to_thread(self.get_checklist_draft_snapshot, draft_id)
         if snapshot:
             await self.event_bus.publish(draft_id, snapshot.model_dump(mode="json"))
@@ -2379,6 +2748,7 @@ class UploadPipelineService:
         stage: str | None,
         progress_pct: int | None,
         message: str | None,
+        meta_merge: dict[str, Any] | None,
     ) -> None:
         with self.session_factory() as session:
             job = session.get(ChecklistDraftJob, draft_id)
@@ -2399,6 +2769,10 @@ class UploadPipelineService:
                 job.progress_pct = progress_pct
             if message is not None:
                 job.message = message
+            if meta_merge:
+                meta = dict(job.meta_json or {})
+                meta.update(meta_merge)
+                job.meta_json = meta
             job.updated_at = utcnow()
             self._sync_project_state(session, job.project_id)
             session.commit()
@@ -3508,6 +3882,7 @@ class UploadPipelineService:
                 checklist_jobs = session.execute(
                     select(ChecklistDraftJob).where(ChecklistDraftJob.project_id == project.id)
                 ).scalars().all()
+                checklist_job_ids = [job.id for job in checklist_jobs]
                 for job in checklist_jobs:
                     existing_meta = dict(job.result_json.get("meta", {}) if isinstance(job.result_json, dict) else {})
                     existing_meta["confidence"] = 0.0
@@ -3518,6 +3893,25 @@ class UploadPipelineService:
                         "meta": existing_meta,
                         "checks": [],
                     }
+                    job.meta_json = {
+                        "synthesis_strategy": (job.meta_json or {}).get("synthesis_strategy"),
+                        "fallback_used": (job.meta_json or {}).get("fallback_used", False),
+                        "purged": True,
+                    }
+
+                if checklist_job_ids:
+                    synthesis_runs = session.execute(
+                        select(ChecklistSynthesisRun).where(ChecklistSynthesisRun.checklist_draft_id.in_(checklist_job_ids))
+                    ).scalars().all()
+                    run_ids = [run.id for run in synthesis_runs]
+                    for run in synthesis_runs:
+                        run.error_message = "Synthesis trace content was purged after the retention window."
+                    if run_ids:
+                        synthesis_events = session.execute(
+                            select(ChecklistSynthesisEvent).where(ChecklistSynthesisEvent.synthesis_run_id.in_(run_ids))
+                        ).scalars().all()
+                        for event in synthesis_events:
+                            event.payload_json = {"message": "Synthesis trace content was purged after the retention window."}
 
                 approved_checklists = session.execute(
                     select(ApprovedChecklist).where(ApprovedChecklist.project_id == project.id)

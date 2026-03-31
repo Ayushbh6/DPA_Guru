@@ -13,6 +13,7 @@ if src_path not in __path__:
 
 from .schema import (  # noqa: E402,F401
     ApprovalStatus,
+    ChecklistCategory,
     ChecklistDocument,
     ChecklistDraftItem,
     ChecklistDraftMeta,
@@ -20,10 +21,13 @@ from .schema import (  # noqa: E402,F401
     ChecklistGovernance,
     ChecklistItem,
     ChecklistSource,
+    checklist_category_guidance_lines,
+    checklist_category_values,
 )
 
 __all__ = [
     "ApprovalStatus",
+    "ChecklistCategory",
     "ChecklistDocument",
     "ChecklistDraftItem",
     "ChecklistDraftMeta",
@@ -31,4 +35,6 @@ __all__ = [
     "ChecklistGovernance",
     "ChecklistItem",
     "ChecklistSource",
+    "checklist_category_guidance_lines",
+    "checklist_category_values",
 ]

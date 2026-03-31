@@ -480,26 +480,33 @@ def create_app() -> FastAPI:
     async def create_checklist_draft(payload: ChecklistDraftRequest, request: Request):
         auth_manager.require_request_origin(request)
         actor = require_actor(request)
-        await enforce_rate_limit(
-            bucket="checklist_user",
-            subject=actor.username,
-            limit=settings.checklist_rate_limit_per_user,
-            window_seconds=settings.checklist_rate_limit_window_seconds,
-            request=request,
-            actor_username=actor.username,
-            detail="Checklist generation is rate limited for this account.",
-            audit_callback=lambda retry_after: asyncio.to_thread(
-                service.record_document_policy_event,
-                document_id=payload.document_id,
-                actor_username=actor.username,
-                trace_id=request_id_for(request),
-                event_name="checklist_rate_limited",
-                metadata_json={
-                    "document_id": str(payload.document_id),
-                    "retry_after_seconds": retry_after,
-                },
-            ),
+        bypass_rate_limit = await asyncio.to_thread(
+            service.should_bypass_checklist_rate_limit_after_cancel,
+            payload.document_id,
+            actor.username,
+            settings.checklist_rate_limit_window_seconds,
         )
+        if not bypass_rate_limit:
+            await enforce_rate_limit(
+                bucket="checklist_user",
+                subject=actor.username,
+                limit=settings.checklist_rate_limit_per_user,
+                window_seconds=settings.checklist_rate_limit_window_seconds,
+                request=request,
+                actor_username=actor.username,
+                detail="Checklist generation is rate limited for this account.",
+                audit_callback=lambda retry_after: asyncio.to_thread(
+                    service.record_document_policy_event,
+                    document_id=payload.document_id,
+                    actor_username=actor.username,
+                    trace_id=request_id_for(request),
+                    event_name="checklist_rate_limited",
+                    metadata_json={
+                        "document_id": str(payload.document_id),
+                        "retry_after_seconds": retry_after,
+                    },
+                ),
+            )
         return await service.create_checklist_draft(
             document_id=payload.document_id,
             selected_source_ids=payload.selected_source_ids,

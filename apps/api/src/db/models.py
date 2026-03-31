@@ -154,6 +154,7 @@ class ChecklistDraftJob(Base):
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     selected_source_ids: Mapped[list[str]] = mapped_column(JSONB(astext_type=Text()), nullable=False)
     user_instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    meta_json: Mapped[dict | None] = mapped_column(JSONB(astext_type=Text()), nullable=True)
     result_json: Mapped[dict | None] = mapped_column(JSONB(astext_type=Text()), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -171,6 +172,47 @@ class ChecklistDraftJob(Base):
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ChecklistSynthesisRun(Base):
+    __tablename__ = "checklist_synthesis_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    checklist_draft_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("checklist_draft_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    partial_drafts_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    candidate_checks_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    candidate_pairs_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    candidate_pairs_verified: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    merge_groups_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    merge_groups_completed: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ChecklistSynthesisEvent(Base):
+    __tablename__ = "checklist_synthesis_events"
+    __table_args__ = (
+        UniqueConstraint("synthesis_run_id", "sequence_no", name="checklist_synthesis_events_run_sequence_uidx"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    synthesis_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("checklist_synthesis_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSONB(astext_type=Text()), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
 
 
 class ApprovedChecklist(Base):

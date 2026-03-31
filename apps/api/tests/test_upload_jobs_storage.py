@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
 
+from dpa_checklist import ChecklistCategory, ChecklistDraftItem, ChecklistDraftMeta, ChecklistDraftOutput, ChecklistSource
 from upload_api.config import Settings
 from upload_api.events import JobEventBus
-from upload_api.jobs import UploadPipelineService
+from upload_api.jobs import UploadPipelineService, utcnow
 from upload_api.parsers import PdfInspection
 from upload_api.storage import ArtifactStore
 
@@ -27,6 +29,13 @@ def _settings(tmp_path: Path) -> Settings:
         tokenizer_encoding="cl100k_base",
         openai_api_key="test-key",
         openai_embedding_model="text-embedding-3-small",
+        checklist_synthesis_strategy="category_groups_v1",
+        checklist_synthesis_legacy_fallback=True,
+        checklist_synthesis_group_similarity_threshold=0.90,
+        checklist_synthesis_group_merge_threshold=0.92,
+        checklist_synthesis_group_max_neighbors=2,
+        checklist_synthesis_group_max_size=5,
+        checklist_synthesis_group_max_parallel=4,
         gemini_api_key="test-key",
         gemini_checklist_model="gemini-3-flash-preview",
         gemini_review_model="gemini-3-flash-preview",
@@ -108,6 +117,51 @@ class _SessionFactoryStub:
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         return False
+
+
+class _ChecklistJobStub:
+    def __init__(self, *, document_id, status="FAILED", error_code="UserCanceled", finished_at=None) -> None:
+        self.document_id = document_id
+        self.status = status
+        self.error_code = error_code
+        self.completed_at = finished_at
+        self.updated_at = finished_at
+        self.created_at = finished_at
+
+
+def _sample_checklist_result() -> ChecklistDraftOutput:
+    return ChecklistDraftOutput(
+        version="v1",
+        meta=ChecklistDraftMeta(
+            selected_source_ids=["gdpr_regulation_2016_679"],
+            confidence=0.9,
+            open_questions=[],
+            generation_summary="summary",
+        ),
+        checks=[
+            ChecklistDraftItem(
+                check_id="CHECK_001",
+                title="Security Measures",
+                category=ChecklistCategory.SECURITY_AND_CONFIDENTIALITY.value,
+                legal_basis=["GDPR Art. 32"],
+                required=True,
+                severity="HIGH",
+                evidence_hint="Look for the security clause.",
+                pass_criteria=["Processor commits to security measures."],
+                fail_criteria=["No security commitment."],
+                sources=[
+                    ChecklistSource(
+                        source_type="LAW",
+                        authority="EDPB",
+                        source_ref="Art 32",
+                        source_url="https://example.com/source",
+                        source_excerpt="Security obligations apply.",
+                    )
+                ],
+                draft_rationale="Security obligations should be explicit.",
+            )
+        ],
+    )
 
 
 def test_load_dpa_pages_falls_back_to_markdown_when_pages_json_missing(tmp_path: Path) -> None:
@@ -228,6 +282,153 @@ def test_prepare_upload_context_rejects_global_storage_cap(tmp_path: Path, monke
     assert "storage limit" in exc.value.detail.lower()
     assert session.committed is True
     assert audit_events[0]["event_name"] == "document_upload_quota_denied_global_storage"
+
+
+def test_user_canceled_checklist_job_allows_immediate_rate_limit_bypass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    session = _SessionStub()
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=_SessionFactoryStub(session),  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    document_id = uuid.uuid4()
+    finished_at = utcnow() - timedelta(seconds=5)
+
+    project = type("ProjectStub", (), {"id": uuid.uuid4()})()
+    document = type("DocumentStub", (), {"id": document_id})()
+    latest_job = _ChecklistJobStub(document_id=document_id, finished_at=finished_at)
+
+    monkeypatch.setattr(service, "_require_owned_document", lambda *_args, **_kwargs: (project, document))
+    monkeypatch.setattr(service, "_latest_checklist_job_for_project", lambda *_args, **_kwargs: latest_job)
+
+    assert service.should_bypass_checklist_rate_limit_after_cancel(
+        document_id,
+        "local-dev",
+        settings.checklist_rate_limit_window_seconds,
+    ) is True
+
+
+def test_non_canceled_or_stale_checklist_job_does_not_bypass_rate_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    session = _SessionStub()
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=_SessionFactoryStub(session),  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    document_id = uuid.uuid4()
+    project = type("ProjectStub", (), {"id": uuid.uuid4()})()
+    document = type("DocumentStub", (), {"id": document_id})()
+
+    monkeypatch.setattr(service, "_require_owned_document", lambda *_args, **_kwargs: (project, document))
+
+    stale_job = _ChecklistJobStub(
+        document_id=document_id,
+        finished_at=utcnow() - timedelta(seconds=settings.checklist_rate_limit_window_seconds + 5),
+    )
+    non_canceled_job = _ChecklistJobStub(
+        document_id=document_id,
+        error_code="RuntimeError",
+        finished_at=utcnow(),
+    )
+
+    monkeypatch.setattr(service, "_latest_checklist_job_for_project", lambda *_args, **_kwargs: non_canceled_job)
+    assert service.should_bypass_checklist_rate_limit_after_cancel(
+        document_id,
+        "local-dev",
+        settings.checklist_rate_limit_window_seconds,
+    ) is False
+
+    monkeypatch.setattr(service, "_latest_checklist_job_for_project", lambda *_args, **_kwargs: stale_job)
+    assert service.should_bypass_checklist_rate_limit_after_cancel(
+        document_id,
+        "local-dev",
+        settings.checklist_rate_limit_window_seconds,
+    ) is False
+
+
+def test_category_group_checklist_synthesis_falls_back_to_legacy_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    settings = Settings(**{**settings.__dict__, "checklist_synthesis_strategy": "category_groups_v1", "checklist_synthesis_legacy_fallback": True})
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=_SessionFactoryStub(_SessionStub()),  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    expected = _sample_checklist_result()
+    traces: list[tuple[str, dict[str, object]]] = []
+    progress_updates: list[tuple[str, str, dict[str, object] | None, int | None]] = []
+
+    monkeypatch.setattr(
+        service.checklist_agent,
+        "synthesize_drafts_category_groups",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    monkeypatch.setattr(service.checklist_agent, "synthesize_drafts_legacy", lambda *_args, **_kwargs: expected)
+
+    result, fallback_used = service._synthesize_checklist_drafts_sync(
+        uuid.uuid4(),
+        [expected, expected],
+        None,
+        lambda stage, message, meta=None, progress_pct=None: progress_updates.append((stage, message, meta, progress_pct)),
+        lambda event_type, payload: traces.append((event_type, payload)),
+    )
+
+    assert result == expected
+    assert fallback_used is True
+    assert any(event_type == "legacy_fallback" for event_type, _payload in traces)
+    assert any(update[0] == "SYNTHESIZING" for update in progress_updates)
+
+
+def test_unknown_checklist_synthesis_strategy_uses_legacy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    settings = Settings(**{**settings.__dict__, "checklist_synthesis_strategy": "verified_cluster_v1"})
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=_SessionFactoryStub(_SessionStub()),  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    expected = _sample_checklist_result()
+    legacy_calls: list[bool] = []
+
+    monkeypatch.setattr(
+        service.checklist_agent,
+        "synthesize_drafts_legacy",
+        lambda *_args, **_kwargs: legacy_calls.append(True) or expected,
+    )
+
+    result, fallback_used = service._synthesize_checklist_drafts_sync(
+        uuid.uuid4(),
+        [expected, expected],
+        None,
+        lambda *_args, **_kwargs: None,
+        lambda *_args, **_kwargs: None,
+    )
+
+    assert result == expected
+    assert fallback_used is False
+    assert legacy_calls == [True]
 
 
 def test_enforce_project_alpha_quota_rejects_user_over_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -119,10 +119,23 @@ export type ReviewSetupPayload = {
   selected_source_ids: string[];
 };
 
+export const CHECKLIST_CATEGORIES = [
+  "Scope, Roles & Instructions",
+  "Subprocessors & Personnel",
+  "Security & Confidentiality",
+  "Data Subject Rights & Assistance",
+  "Incidents & Breach Notification",
+  "International Transfers & Localization",
+  "Retention, Deletion & Exit",
+  "Audit, Compliance & Liability",
+] as const;
+
+export type ChecklistCategory = (typeof CHECKLIST_CATEGORIES)[number];
+
 export type ChecklistItem = {
   check_id: string;
   title: string;
-  category: string;
+  category: ChecklistCategory;
   legal_basis: string[];
   required: boolean;
   severity: "LOW" | "MEDIUM" | "HIGH" | "MANDATORY" | string;
@@ -208,6 +221,7 @@ export type ChecklistDraftStatus = {
   message?: string | null;
   selected_source_ids: string[];
   user_instruction?: string | null;
+  meta?: Record<string, unknown> | null;
   result?: ChecklistDraftOutput | null;
   error_code?: string | null;
   error_message?: string | null;
@@ -362,7 +376,7 @@ export class ApiError extends Error {
   }
 }
 
-export function getApiBaseUrl() {
+function getConfiguredApiBaseUrl() {
   const configuredBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
   if (!configuredBaseUrl) {
     throw new Error("NEXT_PUBLIC_API_BASE_URL must be set.");
@@ -370,8 +384,15 @@ export function getApiBaseUrl() {
   return configuredBaseUrl;
 }
 
+export function getApiBaseUrl() {
+  if (typeof window !== "undefined") {
+    return "/api/proxy";
+  }
+  return getConfiguredApiBaseUrl();
+}
+
 export function getWsBaseUrl() {
-  const apiBase = getApiBaseUrl();
+  const apiBase = getConfiguredApiBaseUrl();
   if (apiBase.startsWith("https://")) return apiBase.replace("https://", "wss://");
   if (apiBase.startsWith("http://")) return apiBase.replace("http://", "ws://");
   return apiBase;

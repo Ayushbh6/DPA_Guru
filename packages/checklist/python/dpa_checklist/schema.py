@@ -19,6 +19,56 @@ class ChecklistSeverity(str, Enum):
     MANDATORY = "MANDATORY"
 
 
+class ChecklistCategory(str, Enum):
+    SCOPE_ROLES_AND_INSTRUCTIONS = "Scope, Roles & Instructions"
+    SUBPROCESSORS_AND_PERSONNEL = "Subprocessors & Personnel"
+    SECURITY_AND_CONFIDENTIALITY = "Security & Confidentiality"
+    DATA_SUBJECT_RIGHTS_AND_ASSISTANCE = "Data Subject Rights & Assistance"
+    INCIDENT_AND_BREACH_MANAGEMENT = "Incidents & Breach Notification"
+    INTERNATIONAL_TRANSFERS_AND_LOCALIZATION = "International Transfers & Localization"
+    RETENTION_DELETION_AND_EXIT = "Retention, Deletion & Exit"
+    AUDIT_COMPLIANCE_AND_LIABILITY = "Audit, Compliance & Liability"
+
+
+CHECKLIST_CATEGORY_COVERAGE: dict[ChecklistCategory, str] = {
+    ChecklistCategory.SCOPE_ROLES_AND_INSTRUCTIONS: (
+        "parties, controller or processor roles, subject matter, duration, purpose, documented instructions, and use limits"
+    ),
+    ChecklistCategory.SUBPROCESSORS_AND_PERSONNEL: (
+        "subprocessor appointment, approval or notice rights, flow-down terms, authorized personnel, training, and staff confidentiality undertakings"
+    ),
+    ChecklistCategory.SECURITY_AND_CONFIDENTIALITY: (
+        "technical and organizational measures, access control, encryption, segregation, resilience, testing, and secure handling commitments"
+    ),
+    ChecklistCategory.DATA_SUBJECT_RIGHTS_AND_ASSISTANCE: (
+        "controller assistance with data subject requests, regulatory inquiries, DPIAs, prior consultation, and related cooperation duties"
+    ),
+    ChecklistCategory.INCIDENT_AND_BREACH_MANAGEMENT: (
+        "security incident handling, breach notification timing and content, investigation support, remediation, and escalation duties"
+    ),
+    ChecklistCategory.INTERNATIONAL_TRANSFERS_AND_LOCALIZATION: (
+        "cross-border transfers, SCCs, adequacy, transfer impact measures, data location commitments, and supplementary safeguards"
+    ),
+    ChecklistCategory.RETENTION_DELETION_AND_EXIT: (
+        "retention limits, return or deletion on termination, exit support, destruction certificates, and post-termination handling"
+    ),
+    ChecklistCategory.AUDIT_COMPLIANCE_AND_LIABILITY: (
+        "audit rights, records, compliance evidence, inspections, liability caps, indemnities, and general compliance or termination terms"
+    ),
+}
+
+
+def checklist_category_values() -> list[str]:
+    return [category.value for category in ChecklistCategory]
+
+
+def checklist_category_guidance_lines() -> list[str]:
+    return [
+        f"- {category.value}: {CHECKLIST_CATEGORY_COVERAGE[category]}."
+        for category in ChecklistCategory
+    ]
+
+
 class SourceType(str, Enum):
     LAW = "LAW"
     GUIDELINE = "GUIDELINE"
@@ -59,7 +109,7 @@ class ChecklistGovernance(StrictModel):
 class ChecklistItem(StrictModel):
     check_id: str = Field(pattern=r"^[A-Z0-9_.-]+$")
     title: str = Field(min_length=1)
-    category: str = Field(min_length=1)
+    category: ChecklistCategory = Field(description="One approved checklist category from the fixed DPA category taxonomy.")
     legal_basis: list[str] = Field(min_length=1)
     required: bool
     severity: ChecklistSeverity

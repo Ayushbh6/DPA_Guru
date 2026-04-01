@@ -8,7 +8,7 @@ from pathlib import Path
 
 from sqlalchemy import delete, select
 
-from db.models import Document, DocumentParseJob, Project
+from db.models import ChecklistDraftJob, Document, DocumentParseJob, Project
 from upload_api.db import build_session_factory
 from upload_api.events import JobEventBus
 from upload_api.jobs import PermanentJobError, UploadPipelineService, utcnow
@@ -173,6 +173,73 @@ def _cleanup_parse_job(session_factory, *, project_id: uuid.UUID, document_id: u
         session.commit()
 
 
+def _seed_checklist_job(service: UploadPipelineService, session_factory, *, status: str = "QUEUED") -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    tenant_id = service.settings.default_dev_tenant_id
+    project_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    now = utcnow()
+
+    with session_factory() as session:
+        service._ensure_dev_tenant(session)
+        session.add(
+            Project(
+                id=project_id,
+                tenant_id=tenant_id,
+                owner_username="local-dev",
+                name=f"Checklist Project {project_id}",
+                status="READY_FOR_CHECKLIST",
+                created_at=now,
+                updated_at=now,
+                last_activity_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            Document(
+                id=document_id,
+                tenant_id=tenant_id,
+                project_id=project_id,
+                filename="sample.pdf",
+                mime_type="application/pdf",
+                page_count=1,
+                storage_uri="file:///tmp/source.pdf",
+                extracted_text_uri="file:///tmp/parsed.md",
+                extracted_text_format="markdown",
+                uploaded_at=now,
+                parse_status="COMPLETED",
+            )
+        )
+        session.flush()
+        session.add(
+            ChecklistDraftJob(
+                id=job_id,
+                tenant_id=tenant_id,
+                project_id=project_id,
+                document_id=document_id,
+                status=status,
+                stage="QUEUED" if status == "QUEUED" else "DRAFTING_CHECKLIST",
+                progress_pct=5,
+                message="Queued.",
+                selected_source_ids=["gdpr_regulation_2016_679"],
+                created_at=now,
+                updated_at=now,
+                available_at=now - timedelta(seconds=1),
+                attempt_count=0,
+            )
+        )
+        session.commit()
+    return project_id, document_id, job_id
+
+
+def _cleanup_checklist_job(session_factory, *, project_id: uuid.UUID, document_id: uuid.UUID, job_id: uuid.UUID) -> None:
+    with session_factory() as session:
+        session.execute(delete(ChecklistDraftJob).where(ChecklistDraftJob.id == job_id))
+        session.execute(delete(Document).where(Document.id == document_id))
+        session.execute(delete(Project).where(Project.id == project_id))
+        session.commit()
+
+
 def test_claim_next_job_marks_parse_job_running_with_lease(tmp_path: Path) -> None:
     service, session_factory = _build_service(tmp_path)
     project_id, document_id, job_id = _seed_parse_job(service, session_factory)
@@ -281,3 +348,34 @@ def test_execute_claimed_job_marks_permanent_failures_failed(tmp_path: Path, mon
             assert document.parse_status == "FAILED"
     finally:
         _cleanup_parse_job(session_factory, project_id=project_id, document_id=document_id, job_id=job_id)
+
+
+def test_execute_claimed_checklist_job_does_not_requeue_after_user_cancel(tmp_path: Path, monkeypatch) -> None:
+    service, session_factory = _build_service(tmp_path)
+    project_id, document_id, job_id = _seed_checklist_job(service, session_factory)
+    try:
+        claimed = service.claim_next_job(worker_id="test-worker", job_types=("checklist",))
+        assert claimed is not None
+
+        async def _cancel_then_fail(_job_id: uuid.UUID) -> None:
+            service._cancel_checklist_draft_sync(job_id, actor_username="local-dev", trace_id="test-trace")
+            raise RuntimeError("late upstream failure")
+
+        monkeypatch.setattr(service, "_run_checklist_job", _cancel_then_fail)
+
+        try:
+            asyncio.run(service.execute_claimed_job(claimed, worker_id="test-worker"))
+        except RuntimeError:
+            pass
+        else:  # pragma: no cover - explicit assertion branch
+            raise AssertionError("Expected cancelled checklist failure to propagate to worker.")
+
+        with session_factory() as session:
+            job = session.get(ChecklistDraftJob, job_id)
+            assert job is not None
+            assert job.status == "FAILED"
+            assert job.error_code == "UserCanceled"
+            assert job.claimed_by_worker is None
+            assert job.available_at <= utcnow()
+    finally:
+        _cleanup_checklist_job(session_factory, project_id=project_id, document_id=document_id, job_id=job_id)

@@ -431,6 +431,45 @@ def test_unknown_checklist_synthesis_strategy_uses_legacy(tmp_path: Path, monkey
     assert legacy_calls == [True]
 
 
+def test_build_checklist_snapshot_tolerates_invalid_stored_result(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=_SessionFactoryStub(_SessionStub()),  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    job = type(
+        "ChecklistJobStub",
+        (),
+        {
+            "id": uuid.uuid4(),
+            "project_id": uuid.uuid4(),
+            "status": "COMPLETED",
+            "stage": "COMPLETED",
+            "progress_pct": 100,
+            "message": "Checklist ready.",
+            "selected_source_ids": ["gdpr_regulation_2016_679"],
+            "user_instruction": None,
+            "meta_json": None,
+            "result_json": "{\"version\": ",
+            "error_code": None,
+            "error_message": None,
+        },
+    )()
+    doc = type("DocumentStub", (), {"id": uuid.uuid4()})()
+
+    snapshot = service._build_checklist_snapshot(job, doc)
+
+    assert snapshot.result is None
+    assert snapshot.error_code == "StoredResultInvalid"
+    assert "could not be loaded" in (snapshot.error_message or "")
+
+
 def test_enforce_project_alpha_quota_rejects_user_over_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     settings = _settings(tmp_path)
     session = _SessionStub()

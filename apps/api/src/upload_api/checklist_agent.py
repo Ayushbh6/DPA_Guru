@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import json
 import re
 import uuid
@@ -10,11 +11,14 @@ from typing import Any, Callable
 from dpa_checklist import ChecklistDraftOutput, checklist_category_guidance_lines, checklist_category_values
 from google import genai
 from google.genai import types
+from pydantic import ValidationError
 
+from .logging_utils import log_event
 from .config import Settings
 from .kb_retrieval import KbVectorRetriever
 from .checklist_synthesis import (
     CategoryGroupChecklistSynthesizer,
+    ChecklistSynthesisCanceledError,
     SynthesisCancelCallback,
     SynthesisProgressCallback,
     SynthesisTraceCallback,
@@ -114,6 +118,72 @@ def _normalize_check_ids(payload: ChecklistDraftOutput) -> ChecklistDraftOutput:
     for index, item in enumerate(data["checks"], start=1):
         item["check_id"] = f"CHECK_{index:03d}"
     return ChecklistDraftOutput.model_validate(data)
+
+
+def _strip_json_fences(value: str) -> str:
+    text = value.strip()
+    if not text.startswith("```"):
+        return text
+    lines = text.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _response_finish_reasons(response: Any) -> list[str]:
+    reasons: list[str] = []
+    for candidate in list(getattr(response, "candidates", []) or []):
+        reason = getattr(candidate, "finish_reason", None)
+        if reason is None:
+            continue
+        reasons.append(str(reason))
+    return reasons
+
+
+def _response_usage_metadata(response: Any) -> dict[str, Any] | None:
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return None
+    if hasattr(usage, "model_dump"):
+        return usage.model_dump(mode="python")
+    if hasattr(usage, "__dict__"):
+        return dict(vars(usage))
+    return {"value": str(usage)}
+
+
+def _raise_if_cancelled(cancel_check: SynthesisCancelCallback | None, *, phase: str) -> None:
+    if cancel_check is not None and cancel_check():
+        raise ChecklistSynthesisCanceledError(f"Checklist synthesis canceled during {phase}.")
+
+
+def _parse_checklist_output_text(
+    raw_text: str,
+    *,
+    phase: str,
+    model: str,
+    attempt: int,
+    response: Any,
+) -> ChecklistDraftOutput:
+    json_text = _strip_json_fences(raw_text)
+    try:
+        return normalize_draft_output(ChecklistDraftOutput.model_validate_json(json_text))
+    except ValidationError as exc:
+        log_event(
+            logging.WARNING,
+            severity="warn",
+            event="checklist_model_parse_failed",
+            phase=phase,
+            model=model,
+            attempt=attempt,
+            raw_text_length=len(raw_text),
+            finish_reasons=_response_finish_reasons(response),
+            usage_metadata=_response_usage_metadata(response),
+            validation_error=str(exc),
+            response_excerpt=raw_text[:500],
+        )
+        raise
 
 
 def _gemini_response_schema() -> dict[str, Any]:
@@ -435,7 +505,13 @@ class ChecklistDraftAgent:
         if progress_cb:
             progress_cb("VALIDATING_OUTPUT", "Finalizing the checklist.")
 
-        payload = normalize_draft_output(ChecklistDraftOutput.model_validate_json(final_text))
+        payload = _parse_checklist_output_text(
+            final_text,
+            phase="checklist_drafting",
+            model=self._settings.gemini_checklist_model,
+            attempt=1,
+            response=response,
+        )
 
         return _normalize_check_ids(payload)
 
@@ -444,6 +520,7 @@ class ChecklistDraftAgent:
         drafts: list[ChecklistDraftOutput],
         user_instruction: str | None = None,
         progress_cb: ProgressCallback | None = None,
+        cancel_check: SynthesisCancelCallback | None = None,
     ) -> ChecklistDraftOutput:
         if not self._settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY is required for checklist synthesis.")
@@ -470,21 +547,46 @@ class ChecklistDraftAgent:
             contents.append(draft.model_dump_json(indent=2))
 
         with genai.Client(api_key=self._settings.gemini_api_key) as client:
-            response = client.models.generate_content(
-                model=self._settings.gemini_checklist_model,
-                contents="\n\n".join(contents),
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    response_mime_type="application/json",
-                    response_schema=_gemini_response_schema(),
-                    temperature=0.0,
-                ),
-            )
-
-        if not response.text:
-            raise RuntimeError("Gemini did not return structured output for synthesis.")
-
-        payload = normalize_draft_output(ChecklistDraftOutput.model_validate_json(response.text))
+            for attempt in range(1, 3):
+                _raise_if_cancelled(cancel_check, phase="legacy_synthesis_request")
+                response = client.models.generate_content(
+                    model=self._settings.gemini_checklist_model,
+                    contents="\n\n".join(contents),
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        response_mime_type="application/json",
+                        response_schema=_gemini_response_schema(),
+                        temperature=0.0,
+                    ),
+                )
+                _raise_if_cancelled(cancel_check, phase="legacy_synthesis_response")
+                if not response.text:
+                    log_event(
+                        logging.WARNING,
+                        severity="warn",
+                        event="checklist_model_empty_response",
+                        phase="legacy_synthesis",
+                        model=self._settings.gemini_checklist_model,
+                        attempt=attempt,
+                        finish_reasons=_response_finish_reasons(response),
+                        usage_metadata=_response_usage_metadata(response),
+                    )
+                    raise RuntimeError("Gemini did not return structured output for synthesis.")
+                try:
+                    payload = _parse_checklist_output_text(
+                        response.text,
+                        phase="legacy_synthesis",
+                        model=self._settings.gemini_checklist_model,
+                        attempt=attempt,
+                        response=response,
+                    )
+                    break
+                except ValidationError:
+                    if attempt >= 2:
+                        raise
+                    if progress_cb:
+                        progress_cb("SYNTHESIZING", "Received malformed synthesis output. Retrying final merge.")
+                    _raise_if_cancelled(cancel_check, phase="legacy_synthesis_retry")
         
         all_sources = set()
         for draft in drafts:

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -1111,7 +1112,15 @@ class UploadPipelineService:
         )
 
     def _build_checklist_snapshot(self, job: ChecklistDraftJob, doc: Document) -> ChecklistDraftSnapshot:
-        result = ChecklistDraftOutput.model_validate(job.result_json) if job.result_json else None
+        result = None
+        error_code = job.error_code
+        error_message = job.error_message
+        if job.result_json:
+            try:
+                result = ChecklistDraftOutput.model_validate(job.result_json)
+            except ValidationError as exc:
+                error_code = error_code or "StoredResultInvalid"
+                error_message = error_message or f"Stored checklist result could not be loaded: {exc}"
         return ChecklistDraftSnapshot(
             checklist_draft_id=job.id,
             document_id=doc.id,
@@ -1124,8 +1133,8 @@ class UploadPipelineService:
             user_instruction=job.user_instruction,
             meta=job.meta_json,
             result=result,
-            error_code=job.error_code,
-            error_message=job.error_message,
+            error_code=error_code,
+            error_message=error_message,
         )
 
     def _build_approved_checklist_summary(self, checklist: ApprovedChecklist) -> ApprovedChecklistSummary:
@@ -1445,6 +1454,32 @@ class UploadPipelineService:
             row = self._get_job_row_for_update(session, claimed.job_type, claimed.job_id)
             if row is None:
                 return
+            if claimed.job_type == "checklist" and row.status == "FAILED" and row.error_code == "UserCanceled":
+                self._record_job_worker_event(
+                    session,
+                    job_type=claimed.job_type,
+                    job_id=row.id,
+                    tenant_id=row.tenant_id,
+                    project_id=row.project_id,
+                    document_id=row.document_id,
+                    event_name="job_retry_skipped_canceled",
+                    metadata_json={
+                        "attempt_count": int(getattr(row, "attempt_count", 0) or 0),
+                        "worker_id": getattr(row, "claimed_by_worker", None),
+                        "error_code": exc.__class__.__name__,
+                    },
+                )
+                session.commit()
+                log_event(
+                    logging.INFO,
+                    severity="info",
+                    event="checklist_retry_skipped_canceled",
+                    checklist_draft_id=str(row.id),
+                    project_id=str(row.project_id),
+                    attempt_count=int(getattr(row, "attempt_count", 0) or 0),
+                    error_code=exc.__class__.__name__,
+                )
+                return
             if retryable and int(getattr(row, "attempt_count", 0) or 0) < self._max_attempts():
                 self._requeue_job_row(
                     session,
@@ -1454,12 +1489,25 @@ class UploadPipelineService:
                     error_code=exc.__class__.__name__,
                     error_message=str(exc),
                 )
+                session.commit()
+                log_event(
+                    logging.WARNING,
+                    severity="warn",
+                    event="worker_job_requeued",
+                    job_type=claimed.job_type,
+                    job_id=str(row.id),
+                    project_id=str(row.project_id),
+                    attempt_count=int(getattr(row, "attempt_count", 0) or 0),
+                    backoff_seconds=self._retry_backoff_seconds(int(getattr(row, "attempt_count", 0) or 0)),
+                    error_code=exc.__class__.__name__,
+                    error_message=str(exc),
+                )
             else:
                 if retryable:
                     self._mark_retry_exhausted(session, claimed.job_type, row, exc=exc)
                 else:
                     self._mark_job_failed_terminal(session, claimed.job_type, row.id, exc)
-            session.commit()
+                session.commit()
 
     def _heartbeat_job_sync(self, job_type: str, job_id: uuid.UUID, worker_id: str) -> None:
         with self.session_factory() as session:
@@ -2303,11 +2351,22 @@ class UploadPipelineService:
             )
 
         results = await asyncio.gather(*tasks)
+        if await asyncio.to_thread(self._is_checklist_draft_cancelled_sync, draft_id):
+            return
 
         if len(results) == 1:
             result = results[0]
         else:
             strategy = self._normalize_checklist_synthesis_strategy(self.settings.checklist_synthesis_strategy)
+            log_event(
+                logging.INFO,
+                severity="info",
+                event="checklist_synthesis_strategy_selected",
+                checklist_draft_id=str(draft_id),
+                project_id=str(record.get("project_id")) if record.get("project_id") is not None else None,
+                strategy=strategy,
+                partial_drafts_total=len(results),
+            )
             synthesis_run_id = await asyncio.to_thread(
                 self._start_checklist_synthesis_run_sync,
                 draft_id,
@@ -2507,6 +2566,8 @@ class UploadPipelineService:
                     self.checklist_agent.synthesize_drafts_legacy(
                         results,
                         user_instruction=user_instruction,
+                        progress_cb=progress_cb,
+                        cancel_check=lambda: self._is_checklist_draft_cancelled_sync(draft_id),
                     ),
                     True,
                 )
@@ -2559,6 +2620,8 @@ class UploadPipelineService:
                     self.checklist_agent.synthesize_drafts_legacy(
                         results,
                         user_instruction=user_instruction,
+                        progress_cb=progress_cb,
+                        cancel_check=lambda: self._is_checklist_draft_cancelled_sync(draft_id),
                     ),
                     True,
                 )
@@ -2581,6 +2644,8 @@ class UploadPipelineService:
             self.checklist_agent.synthesize_drafts_legacy(
                 results,
                 user_instruction=user_instruction,
+                progress_cb=progress_cb,
+                cancel_check=lambda: self._is_checklist_draft_cancelled_sync(draft_id),
             ),
             False,
         )
@@ -2703,6 +2768,8 @@ class UploadPipelineService:
                 .order_by(DocumentParseJob.created_at.desc())
             ).scalars().first()
             return {
+                "tenant_id": job.tenant_id,
+                "project_id": job.project_id,
                 "document_id": doc.id,
                 "selected_source_ids": list(job.selected_source_ids or []),
                 "user_instruction": job.user_instruction,
@@ -2776,6 +2843,21 @@ class UploadPipelineService:
             job.updated_at = utcnow()
             self._sync_project_state(session, job.project_id)
             session.commit()
+            log_event(
+                logging.INFO,
+                severity="info",
+                event="checklist_job_progress",
+                checklist_draft_id=str(job.id),
+                project_id=str(job.project_id),
+                status=job.status,
+                stage=job.stage,
+                progress_pct=job.progress_pct,
+                message=job.message,
+                attempt_count=int(getattr(job, "attempt_count", 0) or 0),
+                current_substage=(job.meta_json or {}).get("current_substage") if isinstance(job.meta_json, dict) else None,
+                synthesis_strategy=(job.meta_json or {}).get("synthesis_strategy") if isinstance(job.meta_json, dict) else None,
+                fallback_used=(job.meta_json or {}).get("fallback_used") if isinstance(job.meta_json, dict) else None,
+            )
 
     def _finalize_checklist_success(self, draft_id: uuid.UUID, result: ChecklistDraftOutput) -> bool:
         with self.session_factory() as session:

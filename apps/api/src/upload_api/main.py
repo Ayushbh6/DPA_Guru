@@ -480,6 +480,8 @@ def create_app() -> FastAPI:
     async def create_checklist_draft(payload: ChecklistDraftRequest, request: Request):
         auth_manager.require_request_origin(request)
         actor = require_actor(request)
+        if not payload.selected_source_ids:
+            raise HTTPException(status_code=400, detail="At least one reference source must be selected.")
         bypass_rate_limit = await asyncio.to_thread(
             service.should_bypass_checklist_rate_limit_after_cancel,
             payload.document_id,

@@ -53,6 +53,16 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                     "document_chunks",
                     "analysis_runs",
                     "analysis_reports",
+                    "analysis_run_documents",
+                    "approval_packs",
+                    "approval_pack_stage_outputs",
+                    "approval_pack_revisions",
+                    "agent_runs",
+                    "agent_run_messages",
+                    "agent_run_tool_calls",
+                    "agent_run_outputs",
+                    "agent_run_events",
+                    "agent_run_artifacts",
                     "findings",
                     "rule_hits",
                     "review_actions",
@@ -111,7 +121,6 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 assert "checklist_draft_jobs_tenant_created_idx" in idx_names
                 assert "checklist_draft_jobs_document_created_idx" in idx_names
                 assert "checklist_draft_jobs_status_updated_idx" in idx_names
-                assert "documents_project_uidx" in idx_names
                 assert "document_artifacts_document_type_created_idx" in idx_names
                 assert "document_artifacts_tenant_created_idx" in idx_names
                 assert "document_parse_jobs_project_created_idx" in idx_names
@@ -121,6 +130,21 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 assert "analysis_runs_project_started_idx" in idx_names
                 assert "approved_checklists_project_created_idx" in idx_names
                 assert "analysis_runs_status_started_idx" in idx_names
+                assert "documents_project_active_primary_uidx" in idx_names
+                assert "documents_project_type_uploaded_idx" in idx_names
+                assert "document_chunks_document_page_idx" in idx_names
+                assert "analysis_run_documents_run_document_uidx" in idx_names
+                assert "approval_packs_project_created_idx" in idx_names
+                assert "approval_packs_project_active_idx" in idx_names
+                assert "agent_runs_project_created_idx" in idx_names
+                assert "agent_runs_tenant_idempotency_uidx" in idx_names
+                assert "agent_run_messages_run_sequence_uidx" in idx_names
+                assert "agent_run_tool_calls_run_sequence_uidx" in idx_names
+                assert "agent_run_outputs_run_type_idx" in idx_names
+                assert "agent_run_events_run_sequence_uidx" in idx_names
+                assert "agent_run_artifacts_run_type_created_idx" in idx_names
+                assert "approval_pack_stage_outputs_pack_stage_idx" in idx_names
+                assert "approval_pack_revisions_pack_created_idx" in idx_names
 
                 rls_rows = conn.execute(
                     sa.text(
@@ -131,7 +155,10 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                           'tenants', 'users', 'documents', 'document_chunks',
                           'document_artifacts',
                           'projects', 'document_parse_jobs', 'checklist_draft_jobs', 'analysis_runs', 'findings', 'rule_hits',
-                          'review_actions', 'billing_events', 'audit_events', 'checklist_synthesis_runs', 'checklist_synthesis_events'
+                          'review_actions', 'billing_events', 'audit_events', 'checklist_synthesis_runs', 'checklist_synthesis_events',
+                          'analysis_run_documents', 'approval_packs', 'approval_pack_stage_outputs', 'approval_pack_revisions',
+                          'agent_runs', 'agent_run_messages', 'agent_run_tool_calls', 'agent_run_outputs', 'agent_run_events',
+                          'agent_run_artifacts'
                         )
                         """
                     )
@@ -234,8 +261,14 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 document_id = conn.execute(
                     sa.text(
                         """
-                        INSERT INTO documents (tenant_id, project_id, filename, mime_type, page_count, storage_uri)
-                        VALUES (:tenant_id, :project_id, :filename, :mime_type, :page_count, :storage_uri)
+                        INSERT INTO documents (
+                          tenant_id, project_id, filename, mime_type, page_count, storage_uri,
+                          document_type, is_primary, uploaded_by
+                        )
+                        VALUES (
+                          :tenant_id, :project_id, :filename, :mime_type, :page_count, :storage_uri,
+                          :document_type, :is_primary, :uploaded_by
+                        )
                         RETURNING id
                         """
                     ),
@@ -246,6 +279,35 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                         "mime_type": "application/pdf",
                         "page_count": 12,
                         "storage_uri": "supabase://bucket/path/sample-dpa.pdf",
+                        "document_type": "main_dpa",
+                        "is_primary": True,
+                        "uploaded_by": "local-dev",
+                    },
+                ).scalar_one()
+
+                support_document_id = conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO documents (
+                          tenant_id, project_id, filename, mime_type, page_count, storage_uri,
+                          document_type, is_primary, uploaded_by
+                        )
+                        VALUES (
+                          :tenant_id, :project_id, :filename, :mime_type, :page_count, :storage_uri,
+                          :document_type, false, :uploaded_by
+                        )
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "filename": "subprocessors.pdf",
+                        "mime_type": "application/pdf",
+                        "page_count": 3,
+                        "storage_uri": "supabase://bucket/path/subprocessors.pdf",
+                        "document_type": "subprocessors",
+                        "uploaded_by": "local-dev",
                     },
                 ).scalar_one()
 
@@ -283,8 +345,14 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                 run_id = conn.execute(
                     sa.text(
                         """
-                        INSERT INTO analysis_runs (tenant_id, project_id, document_id, status, model_version, policy_version)
-                        VALUES (:tenant_id, :project_id, :document_id, :status, :model_version, :policy_version)
+                        INSERT INTO analysis_runs (
+                          tenant_id, project_id, document_id, primary_document_id, input_document_ids,
+                          status, model_version, policy_version
+                        )
+                        VALUES (
+                          :tenant_id, :project_id, :document_id, :primary_document_id, CAST(:input_document_ids AS jsonb),
+                          :status, :model_version, :policy_version
+                        )
                         RETURNING id
                         """
                     ),
@@ -292,11 +360,33 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                         "tenant_id": tenant_id,
                         "project_id": project_id,
                         "document_id": document_id,
+                        "primary_document_id": document_id,
+                        "input_document_ids": f'["{document_id}", "{support_document_id}"]',
                         "status": "QUEUED",
                         "model_version": "managed-1.0",
                         "policy_version": "policy-2026-02-16",
                     },
                 ).scalar_one()
+
+                conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO analysis_run_documents (
+                          tenant_id, project_id, analysis_run_id, document_id, document_type, role
+                        )
+                        VALUES
+                          (:tenant_id, :project_id, :run_id, :document_id, 'main_dpa', 'primary'),
+                          (:tenant_id, :project_id, :run_id, :support_document_id, 'subprocessors', 'supporting')
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "run_id": run_id,
+                        "document_id": document_id,
+                        "support_document_id": support_document_id,
+                    },
+                )
 
                 finding_id = conn.execute(
                     sa.text(
@@ -337,6 +427,179 @@ def test_alembic_upgrade_and_downgrade_smoke() -> None:
                         "comment": "Needs legal follow-up",
                     },
                 )
+
+                approval_pack_id = conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO approval_packs (
+                          tenant_id, project_id, analysis_run_id, version, status, recommendation,
+                          recommendation_summary, confidence, review_required, pack_json, generated_by
+                        )
+                        VALUES (
+                          :tenant_id, :project_id, :run_id, 'approval_pack_v1', 'draft', 'escalate',
+                          'Escalate due to broad instruction carve-outs.', 0.82, true,
+                          CAST(:pack_json AS jsonb), 'system'
+                        )
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "run_id": run_id,
+                        "pack_json": '{"recommendation":"escalate","evidence":[]}',
+                    },
+                ).scalar_one()
+
+                agent_run_id = conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO agent_runs (
+                          tenant_id, project_id, analysis_run_id, approval_pack_id,
+                          agent_name, agent_role, agent_version, status, model_provider,
+                          model_name, input_tokens, output_tokens, total_tokens
+                        )
+                        VALUES (
+                          :tenant_id, :project_id, :run_id, :approval_pack_id,
+                          'recommendation-agent', 'recommendation', 'v1', 'completed', 'google',
+                          'gemini-test', 100, 50, 150
+                        )
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "run_id": run_id,
+                        "approval_pack_id": approval_pack_id,
+                    },
+                ).scalar_one()
+
+                conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO agent_run_messages (tenant_id, agent_run_id, sequence_no, role, content)
+                        VALUES
+                          (:tenant_id, :agent_run_id, 1, 'system', 'You are the recommendation agent.'),
+                          (:tenant_id, :agent_run_id, 2, 'user', 'Assess the approval recommendation.')
+                        """
+                    ),
+                    {"tenant_id": tenant_id, "agent_run_id": agent_run_id},
+                )
+                conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO agent_run_tool_calls (
+                          tenant_id, agent_run_id, sequence_no, tool_name, input_json, output_json, status
+                        )
+                        VALUES (
+                          :tenant_id, :agent_run_id, 1, 'search_uploaded_docs',
+                          CAST(:input_json AS jsonb), CAST(:output_json AS jsonb), 'completed'
+                        )
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "agent_run_id": agent_run_id,
+                        "input_json": '{"query":"instructions"}',
+                        "output_json": '{"hits":1}',
+                    },
+                )
+                conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO agent_run_outputs (
+                          tenant_id, agent_run_id, output_type, schema_version, output_json, validation_status
+                        )
+                        VALUES (
+                          :tenant_id, :agent_run_id, 'RecommendationOutput', 'v1',
+                          CAST(:output_json AS jsonb), 'valid'
+                        )
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "agent_run_id": agent_run_id,
+                        "output_json": '{"recommendation":"escalate","confidence":0.82}',
+                    },
+                )
+                conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO agent_run_events (tenant_id, agent_run_id, sequence_no, event_type, payload_json)
+                        VALUES (:tenant_id, :agent_run_id, 1, 'completed', CAST(:payload_json AS jsonb))
+                        """
+                    ),
+                    {"tenant_id": tenant_id, "agent_run_id": agent_run_id, "payload_json": '{"ok":true}'},
+                )
+                conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO agent_run_artifacts (
+                          tenant_id, agent_run_id, artifact_type, storage_provider, object_uri, content_type
+                        )
+                        VALUES (:tenant_id, :agent_run_id, 'raw_response', 'local', 'memory://raw-response', 'application/json')
+                        """
+                    ),
+                    {"tenant_id": tenant_id, "agent_run_id": agent_run_id},
+                )
+                conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO approval_pack_stage_outputs (
+                          tenant_id, project_id, analysis_run_id, approval_pack_id, agent_run_id,
+                          stage_name, stage_version, output_json, status
+                        )
+                        VALUES (
+                          :tenant_id, :project_id, :run_id, :approval_pack_id, :agent_run_id,
+                          'recommendation', 'v1', CAST(:output_json AS jsonb), 'completed'
+                        )
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "run_id": run_id,
+                        "approval_pack_id": approval_pack_id,
+                        "agent_run_id": agent_run_id,
+                        "output_json": '{"recommendation":"escalate"}',
+                    },
+                )
+                conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO approval_pack_revisions (
+                          tenant_id, project_id, approval_pack_id, created_by_type, created_by,
+                          reason, changes_summary, patch_json, status
+                        )
+                        VALUES (
+                          :tenant_id, :project_id, :approval_pack_id, 'user', 'local-dev',
+                          'Test revision', 'Clarified recommendation summary', CAST(:patch_json AS jsonb), 'proposed'
+                        )
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "approval_pack_id": approval_pack_id,
+                        "patch_json": '[{"op":"replace","path":"/recommendationSummary","value":"Escalate."}]',
+                    },
+                )
+
+                reconstructed_counts = conn.execute(
+                    sa.text(
+                        """
+                        SELECT
+                          (SELECT count(*) FROM agent_run_messages WHERE agent_run_id = :agent_run_id) AS messages,
+                          (SELECT count(*) FROM agent_run_tool_calls WHERE agent_run_id = :agent_run_id) AS tool_calls,
+                          (SELECT count(*) FROM agent_run_outputs WHERE agent_run_id = :agent_run_id) AS outputs,
+                          (SELECT count(*) FROM agent_run_events WHERE agent_run_id = :agent_run_id) AS events,
+                          (SELECT count(*) FROM agent_run_artifacts WHERE agent_run_id = :agent_run_id) AS artifacts
+                        """
+                    ),
+                    {"agent_run_id": agent_run_id},
+                ).one()
+                assert reconstructed_counts == (2, 1, 1, 1, 1)
 
                 conn.execute(sa.text("SET enable_seqscan = off;"))
                 explain_plan = "\n".join(

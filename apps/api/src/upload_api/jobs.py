@@ -584,6 +584,9 @@ class UploadPipelineService:
                 mime_type=mime_type,
                 page_count=0,
                 storage_uri=upload_artifact.object_uri,
+                document_type="main_dpa",
+                is_primary=True,
+                uploaded_by=actor_username,
                 parse_status="QUEUED",
             )
             session.add(document)

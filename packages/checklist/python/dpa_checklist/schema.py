@@ -6,6 +6,7 @@ from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from typing import Literal
 
 
 class StrictModel(BaseModel):
@@ -81,6 +82,45 @@ class ApprovalStatus(str, Enum):
     APPROVED = "APPROVED"
 
 
+class CriteriaPriority(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class ReviewProfile(StrictModel):
+    profile_id: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    required_document_types: list[str] = Field(default_factory=list)
+    optional_document_types: list[str] = Field(default_factory=list)
+    mandatory_categories: list[str] = Field(default_factory=list)
+    contextual_categories: list[str] = Field(default_factory=list)
+
+
+class CriteriaDocumentInventoryItem(StrictModel):
+    document_id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    document_type: str = Field(min_length=1)
+    lifecycle_status: str = Field(min_length=1)
+    is_primary: bool
+    parsing_status: Literal["pending", "processing", "parsed", "failed"]
+    page_count: int | None = Field(default=None, ge=0)
+    token_count_estimate: int | None = Field(default=None, ge=0)
+
+
+class ExpectedEvidence(StrictModel):
+    document_types: list[str] = Field(default_factory=list)
+    description: str = Field(min_length=1)
+
+
+class CriteriaValidationWarning(StrictModel):
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    severity: str = Field(min_length=1)
+    document_types: list[str] = Field(default_factory=list)
+
+
 class ChecklistSource(StrictModel):
     source_type: SourceType
     authority: str = Field(min_length=1)
@@ -117,6 +157,13 @@ class ChecklistItem(StrictModel):
     pass_criteria: list[str] = Field(min_length=1)
     fail_criteria: list[str] = Field(min_length=1)
     sources: list[ChecklistSource] = Field(min_length=1)
+    rationale: str | None = None
+    applicability: str | None = None
+    priority: CriteriaPriority | None = None
+    expected_evidence: list[ExpectedEvidence] = Field(default_factory=list)
+    likely_document_types: list[str] = Field(default_factory=list)
+    vendor_context_factors: list[str] = Field(default_factory=list)
+    profile_references: list[str] = Field(default_factory=list)
 
 
 class ChecklistDraftMeta(StrictModel):
@@ -133,12 +180,20 @@ class ChecklistDraftItem(ChecklistItem):
 class ChecklistDraftOutput(StrictModel):
     version: str = Field(min_length=1)
     meta: ChecklistDraftMeta
+    review_profile: ReviewProfile | None = None
+    context_snapshot: dict | None = None
+    document_inventory: list[CriteriaDocumentInventoryItem] = Field(default_factory=list)
+    validation_warnings: list[CriteriaValidationWarning] = Field(default_factory=list)
     checks: list[ChecklistDraftItem] = Field(min_length=1)
 
 
 class ChecklistDocument(StrictModel):
     version: str = Field(min_length=1)
     governance: ChecklistGovernance
+    review_profile: ReviewProfile | None = None
+    context_snapshot: dict | None = None
+    document_inventory: list[CriteriaDocumentInventoryItem] = Field(default_factory=list)
+    validation_warnings: list[CriteriaValidationWarning] = Field(default_factory=list)
     checks: list[ChecklistItem] = Field(min_length=1)
 
 

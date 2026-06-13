@@ -154,6 +154,13 @@ class Settings:
     deleted_project_retention_days: int
     document_archive_retention_days: int
     repo_root: Path
+    gemini_approval_pack_model: str | None = None
+    agent_execution_backend: str = "local_postgres"
+    agent_default_max_tool_calls: int = 50
+    agent_criteria_research_max_tool_calls: int = 40
+    agent_criteria_max_children: int = 5
+    agent_child_concurrency: int = 5
+    agent_collect_wait_seconds: int = 15
 
 
 def load_settings() -> Settings:
@@ -242,4 +249,11 @@ def load_settings() -> Settings:
         deleted_project_retention_days=int(os.getenv("DELETED_PROJECT_RETENTION_DAYS", "30")),
         document_archive_retention_days=int(os.getenv("DOCUMENT_ARCHIVE_RETENTION_DAYS", "30")),
         repo_root=repo_root,
+        gemini_approval_pack_model=os.getenv("GEMINI_APPROVAL_PACK_MODEL") or os.getenv("GEMINI_REVIEW_MODEL", "gemini-3-flash-preview"),
+        agent_execution_backend=os.getenv("AGENT_EXECUTION_BACKEND", "local_postgres").strip().lower(),
+        agent_default_max_tool_calls=int(os.getenv("AGENT_DEFAULT_MAX_TOOL_CALLS", "50")),
+        agent_criteria_research_max_tool_calls=int(os.getenv("AGENT_CRITERIA_RESEARCH_MAX_TOOL_CALLS", "40")),
+        agent_criteria_max_children=int(os.getenv("AGENT_CRITERIA_MAX_CHILDREN", "5")),
+        agent_child_concurrency=int(os.getenv("AGENT_CHILD_CONCURRENCY", "5")),
+        agent_collect_wait_seconds=int(os.getenv("AGENT_COLLECT_WAIT_SECONDS", "15")),
     )

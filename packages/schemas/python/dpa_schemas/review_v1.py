@@ -16,6 +16,19 @@ class EvidenceQuote(StrictModel):
     quote: str = Field(min_length=1, max_length=400)
 
 
+class EvidenceItem(StrictModel):
+    source_type: str = Field(min_length=1)
+    source_name: str = Field(min_length=1)
+    document_id: str | None = None
+    document_name: str | None = None
+    document_type: str | None = None
+    page_number: int | None = Field(default=None, ge=1)
+    section_title: str | None = None
+    excerpt: str = Field(min_length=1)
+    explanation: str = Field(min_length=1)
+    source_id: str | None = None
+
+
 class CheckAssessmentOutput(StrictModel):
     check_id: str = Field(min_length=1)
     status: FindingStatus
@@ -23,7 +36,10 @@ class CheckAssessmentOutput(StrictModel):
     confidence: float = Field(ge=0.0, le=1.0)
     evidence_quotes: list[EvidenceQuote] = Field(default_factory=list)
     kb_citations: list[KbCitation] = Field(default_factory=list)
+    evidence: list[EvidenceItem] = Field(default_factory=list)
     missing_elements: list[str] = Field(default_factory=list)
+    vendor_questions: list[str] = Field(default_factory=list)
+    recommended_action: str | None = None
     risk_rationale: str = Field(min_length=1)
     abstained: bool = False
     abstain_reason: str | None = None

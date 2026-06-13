@@ -145,6 +145,69 @@
           "minItems": 1,
           "title": "Sources",
           "type": "array"
+        },
+        "rationale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rationale"
+        },
+        "applicability": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Applicability"
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CriteriaPriority"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "expected_evidence": {
+          "items": {
+            "$ref": "#/$defs/ExpectedEvidence"
+          },
+          "title": "Expected Evidence",
+          "type": "array"
+        },
+        "likely_document_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Likely Document Types",
+          "type": "array"
+        },
+        "vendor_context_factors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Vendor Context Factors",
+          "type": "array"
+        },
+        "profile_references": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Profile References",
+          "type": "array"
         }
       },
       "required": [
@@ -223,6 +286,201 @@
       "title": "ChecklistSource",
       "type": "object"
     },
+    "CriteriaDocumentInventoryItem": {
+      "additionalProperties": false,
+      "properties": {
+        "document_id": {
+          "minLength": 1,
+          "title": "Document Id",
+          "type": "string"
+        },
+        "display_name": {
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "document_type": {
+          "minLength": 1,
+          "title": "Document Type",
+          "type": "string"
+        },
+        "lifecycle_status": {
+          "minLength": 1,
+          "title": "Lifecycle Status",
+          "type": "string"
+        },
+        "is_primary": {
+          "title": "Is Primary",
+          "type": "boolean"
+        },
+        "parsing_status": {
+          "enum": [
+            "pending",
+            "processing",
+            "parsed",
+            "failed"
+          ],
+          "title": "Parsing Status",
+          "type": "string"
+        },
+        "page_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page Count"
+        },
+        "token_count_estimate": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Token Count Estimate"
+        }
+      },
+      "required": [
+        "document_id",
+        "display_name",
+        "document_type",
+        "lifecycle_status",
+        "is_primary",
+        "parsing_status"
+      ],
+      "title": "CriteriaDocumentInventoryItem",
+      "type": "object"
+    },
+    "CriteriaPriority": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "CriteriaPriority",
+      "type": "string"
+    },
+    "CriteriaValidationWarning": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "minLength": 1,
+          "title": "Severity",
+          "type": "string"
+        },
+        "document_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Document Types",
+          "type": "array"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "severity"
+      ],
+      "title": "CriteriaValidationWarning",
+      "type": "object"
+    },
+    "ExpectedEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "document_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Document Types",
+          "type": "array"
+        },
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "title": "ExpectedEvidence",
+      "type": "object"
+    },
+    "ReviewProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "minLength": 1,
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "required_document_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Document Types",
+          "type": "array"
+        },
+        "optional_document_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Optional Document Types",
+          "type": "array"
+        },
+        "mandatory_categories": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Mandatory Categories",
+          "type": "array"
+        },
+        "contextual_categories": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Contextual Categories",
+          "type": "array"
+        }
+      },
+      "required": [
+        "profile_id",
+        "version",
+        "name"
+      ],
+      "title": "ReviewProfile",
+      "type": "object"
+    },
     "SourceType": {
       "enum": [
         "LAW",
@@ -242,6 +500,44 @@
     },
     "governance": {
       "$ref": "#/$defs/ChecklistGovernance"
+    },
+    "review_profile": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ReviewProfile"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "context_snapshot": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Context Snapshot"
+    },
+    "document_inventory": {
+      "items": {
+        "$ref": "#/$defs/CriteriaDocumentInventoryItem"
+      },
+      "title": "Document Inventory",
+      "type": "array"
+    },
+    "validation_warnings": {
+      "items": {
+        "$ref": "#/$defs/CriteriaValidationWarning"
+      },
+      "title": "Validation Warnings",
+      "type": "array"
     },
     "checks": {
       "items": {

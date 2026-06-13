@@ -8,6 +8,11 @@ from dpa_checklist.schema import (
     ChecklistGovernance,
     ChecklistItem,
     ChecklistSource,
+    CriteriaDocumentInventoryItem,
+    CriteriaPriority,
+    CriteriaValidationWarning,
+    ExpectedEvidence,
+    ReviewProfile,
     checklist_category_guidance_lines,
     checklist_category_values,
 )
@@ -22,6 +27,11 @@ __all__ = [
     "ChecklistGovernance",
     "ChecklistItem",
     "ChecklistSource",
+    "CriteriaDocumentInventoryItem",
+    "CriteriaPriority",
+    "CriteriaValidationWarning",
+    "ExpectedEvidence",
+    "ReviewProfile",
     "checklist_category_guidance_lines",
     "checklist_category_values",
 ]

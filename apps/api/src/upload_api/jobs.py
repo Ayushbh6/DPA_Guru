@@ -23,6 +23,7 @@ from db.models import (
     AnalysisRun,
     AnalysisRunDocument,
     ApprovalPack,
+    ApprovalPackStageOutput,
     AuditEvent,
     ApprovedChecklist,
     ChecklistDraftJob,
@@ -37,6 +38,15 @@ from db.models import (
     Tenant,
 )
 from dpa_checklist import ApprovalStatus, ChecklistDocument, ChecklistDraftOutput, ChecklistGovernance
+from upload_api.agents import Phase3AgentCoordinator, build_standard_review_profile
+from upload_api.agents.helpers import DocumentRecord
+from upload_api.agents.schemas import (
+    AgentRunScope,
+    ApprovalPackAgentInput,
+    ApprovalPackAgentOutput,
+    CriteriaDocumentInventoryItem,
+    CriteriaGenerationContext,
+)
 
 from .checklist_agent import ChecklistDraftAgent
 from .checklist_synthesis import ChecklistSynthesisCanceledError
@@ -202,6 +212,7 @@ class UploadPipelineService:
         self.event_bus = event_bus
         self.checklist_agent = ChecklistDraftAgent(settings)
         self.review_agent = ReviewAgent(settings)
+        self.phase3_agents = Phase3AgentCoordinator(settings=settings, session_factory=session_factory)
         self.document_indexer = DocumentChunkIndexer(settings, session_factory)
 
     def recover_incomplete_jobs(self) -> None:
@@ -3089,175 +3100,68 @@ class UploadPipelineService:
         record = await asyncio.to_thread(self._get_checklist_job_record, draft_id)
         if record is None:
             return
-
-        loop = asyncio.get_running_loop()
-
-        def progress_cb(stage: str, message: str) -> None:
-            fut = asyncio.run_coroutine_threadsafe(
-                self._transition_checklist_job(draft_id, stage=stage, message=message),
-                loop,
-            )
-            fut.result()
-
-        selected_source_ids = record["selected_source_ids"]
-
-        chunk_size = 2
-        chunks = [selected_source_ids[i:i + chunk_size] for i in range(0, len(selected_source_ids), chunk_size)]
-
-        if not chunks:
-            chunks = [[]]
-
-        tasks = []
-        for chunk in chunks:
-            chunk_record = dict(record)
-            chunk_record["selected_source_ids"] = chunk
-            tasks.append(
-                asyncio.to_thread(
-                    self._generate_checklist_with_local_artifacts,
-                    chunk_record,
-                    progress_cb if len(chunks) == 1 else None,
-                )
-            )
-
-        if len(chunks) > 1:
-            await self._transition_checklist_job(
-                draft_id,
-                stage="DRAFTING_CHECKLIST",
-                message=f"Extracting obligations across {len(chunks)} parallel agents.",
-            )
-
-        results = await asyncio.gather(*tasks)
-        if await asyncio.to_thread(self._is_checklist_draft_cancelled_sync, draft_id):
-            return
-
-        if len(results) == 1:
-            result = results[0]
-        else:
-            strategy = self._normalize_checklist_synthesis_strategy(self.settings.checklist_synthesis_strategy)
-            log_event(
-                logging.INFO,
-                severity="info",
-                event="checklist_synthesis_strategy_selected",
-                checklist_draft_id=str(draft_id),
-                project_id=str(record.get("project_id")) if record.get("project_id") is not None else None,
-                strategy=strategy,
-                partial_drafts_total=len(results),
-            )
-            synthesis_run_id = await asyncio.to_thread(
-                self._start_checklist_synthesis_run_sync,
-                draft_id,
-                strategy,
-                len(results),
-            )
-
-            def synthesis_progress_cb(
-                stage: str,
-                message: str,
-                meta: dict[str, Any] | None = None,
-                progress_pct: int | None = None,
-            ) -> None:
-                if meta:
-                    self._update_checklist_synthesis_run_sync(
-                        synthesis_run_id,
-                        counts=self._extract_synthesis_counts(meta),
-                    )
-                fut = asyncio.run_coroutine_threadsafe(
-                    self._transition_checklist_job(
-                        draft_id,
-                        stage=stage,
-                        message=message,
-                        progress_pct=progress_pct,
-                        meta_merge=meta,
-                    ),
-                    loop,
-                )
-                fut.result()
-
-            def synthesis_trace_cb(event_type: str, payload: dict[str, Any]) -> None:
-                self._append_checklist_synthesis_event_sync(synthesis_run_id, event_type, payload)
-
-            await self._transition_checklist_job(
-                draft_id,
-                stage=(
-                    "SYNTHESIZING"
-                    if strategy == "legacy"
-                    else "GROUPING_CATEGORIES"
-                    if strategy == "category_groups_v1"
-                    else "EMBEDDING_CHECKS"
-                ),
-                message="Preparing checklist synthesis.",
-                meta_merge={
-                    "synthesis_strategy": strategy,
-                    "fallback_used": False,
-                    "partial_drafts_total": len(results),
-                    "current_substage": (
-                        "SYNTHESIZING"
-                        if strategy == "legacy"
-                        else "GROUPING_CATEGORIES"
-                        if strategy == "category_groups_v1"
-                        else "EMBEDDING_CHECKS"
-                    ),
-                },
-            )
-            try:
-                result, fallback_used = await asyncio.to_thread(
-                    self._synthesize_checklist_drafts_sync,
-                    draft_id,
-                    results,
-                    record["user_instruction"],
-                    synthesis_progress_cb,
-                    synthesis_trace_cb,
-                )
-            except ChecklistSynthesisCanceledError as exc:
-                await asyncio.to_thread(
-                    self._update_checklist_synthesis_run_sync,
-                    synthesis_run_id,
-                    status="FAILED",
-                    error_message=str(exc),
-                    completed=True,
-                )
-                return
-            except Exception as exc:
-                await asyncio.to_thread(
-                    self._update_checklist_synthesis_run_sync,
-                    synthesis_run_id,
-                    status="FAILED",
-                    error_message=str(exc),
-                    completed=True,
-                )
-                raise
-            await asyncio.to_thread(
-                self._update_checklist_synthesis_run_sync,
-                synthesis_run_id,
-                status="COMPLETED",
-                fallback_used=fallback_used,
-                completed=True,
-            )
-            if fallback_used:
-                await self._transition_checklist_job(
-                    draft_id,
-                    stage="FINALIZING_OUTPUT",
-                    message="Legacy synthesis fallback completed. Finalizing output.",
-                    meta_merge={
-                        "synthesis_strategy": strategy,
-                        "fallback_used": True,
-                        "current_substage": "FINALIZING_OUTPUT",
-                    },
-                    progress_pct=96,
-                )
-
-        if await asyncio.to_thread(self._is_checklist_draft_cancelled_sync, draft_id):
-            return
-        finalized = await asyncio.to_thread(self._finalize_checklist_success, draft_id, result)
-        if not finalized:
-            return
         await self._transition_checklist_job(
             draft_id,
-            status="COMPLETED",
-            stage="COMPLETED",
-            message="Checklist is ready for review.",
-            meta_merge={"current_substage": "COMPLETED"},
+            stage="INSPECTING_DPA",
+            message="Loading the current document inventory and vendor context.",
         )
+        criteria_inputs = await asyncio.to_thread(self._build_criteria_agent_inputs_sync, draft_id)
+        await self._transition_checklist_job(
+            draft_id,
+            stage="DRAFTING_CHECKLIST",
+            message="Running the Criteria Agent across the vendor context, uploaded documents, and selected references.",
+            meta_merge={
+                "agent_system": "phase3_v1",
+                "current_substage": "DRAFTING_CHECKLIST",
+            },
+            progress_pct=74,
+        )
+        criteria_agent_run_id: dict[str, str | None] = {"value": None}
+        try:
+            _agent_run_id, result = await asyncio.to_thread(
+                self.phase3_agents.generate_criteria,
+                scope=AgentRunScope(
+                    tenant_id=criteria_inputs["tenant_id"],
+                    project_id=criteria_inputs["project_id"],
+                ),
+                context=criteria_inputs["context"],
+                document_records=criteria_inputs["document_records"],
+                pages_by_document=criteria_inputs["pages_by_document"],
+                user_instruction=record["user_instruction"],
+                cancel_check=lambda: self._is_checklist_draft_cancelled_sync(draft_id),
+                parent_run_started_cb=lambda run_id: criteria_agent_run_id.__setitem__("value", run_id),
+            )
+            criteria_agent_run_id["value"] = _agent_run_id
+        except Exception:
+            if criteria_agent_run_id["value"]:
+                self.phase3_agents.cancel_parent_research(parent_agent_run_id=criteria_agent_run_id["value"])
+                self.phase3_agents.finish_parent_research(parent_agent_run_id=criteria_agent_run_id["value"])
+            raise
+
+        try:
+            if await asyncio.to_thread(self._is_checklist_draft_cancelled_sync, draft_id):
+                self.phase3_agents.cancel_parent_research(parent_agent_run_id=_agent_run_id)
+                return
+            await self._transition_checklist_job(
+                draft_id,
+                stage="VALIDATING_OUTPUT",
+                message="Validating criteria coverage and evidence expectations.",
+                meta_merge={"current_substage": "VALIDATING_OUTPUT"},
+                progress_pct=98,
+            )
+            finalized = await asyncio.to_thread(self._finalize_checklist_success, draft_id, result)
+            if not finalized:
+                return
+            await self._transition_checklist_job(
+                draft_id,
+                status="COMPLETED",
+                stage="COMPLETED",
+                message="Checklist is ready for review.",
+                meta_merge={"current_substage": "COMPLETED"},
+            )
+        finally:
+            if criteria_agent_run_id["value"]:
+                self.phase3_agents.finish_parent_research(parent_agent_run_id=criteria_agent_run_id["value"])
 
     def _generate_checklist_with_local_artifacts(
         self,
@@ -3556,6 +3460,97 @@ class UploadPipelineService:
                     else None
                 ),
             }
+
+    def _build_criteria_agent_inputs_sync(self, draft_id: uuid.UUID) -> dict[str, Any]:
+        with self.session_factory() as session:
+            row = session.execute(
+                select(ChecklistDraftJob, Project, Document)
+                .join(Project, Project.id == ChecklistDraftJob.project_id)
+                .join(Document, Document.id == ChecklistDraftJob.document_id)
+                .where(ChecklistDraftJob.id == draft_id)
+            ).first()
+            if not row:
+                raise RuntimeError("Checklist draft job not found.")
+            job, project, primary_document = row
+            ordered_ids: list[uuid.UUID] = []
+            for item in job.input_document_ids or []:
+                try:
+                    document_id = uuid.UUID(str(item))
+                except (TypeError, ValueError):
+                    continue
+                if document_id not in ordered_ids:
+                    ordered_ids.append(document_id)
+            if primary_document.id not in ordered_ids:
+                ordered_ids.insert(0, primary_document.id)
+            documents = session.execute(select(Document).where(Document.id.in_(ordered_ids))).scalars().all()
+            document_by_id = {document.id: document for document in documents}
+            ordered_documents = [document_by_id[document_id] for document_id in ordered_ids if document_id in document_by_id]
+            if not ordered_documents:
+                ordered_documents = [primary_document]
+
+            pages_by_document: dict[str, list[DpaPageRecord]] = {}
+            inventory: list[CriteriaDocumentInventoryItem] = []
+            document_records: list[DocumentRecord] = []
+
+            for document in ordered_documents:
+                parse_job = self._latest_parse_job_for_document(session, document.id)
+                parsed_pages_uri = (
+                    parse_job.meta_json.get("parsed_pages_uri")
+                    if parse_job is not None and isinstance(parse_job.meta_json, dict)
+                    else None
+                )
+                pages_by_document[str(document.id)] = self._load_dpa_pages(document.extracted_text_uri, parsed_pages_uri)
+                display_name = document.display_name or document.filename
+                document_records.append(
+                    DocumentRecord(
+                        document_id=str(document.id),
+                        document_name=display_name,
+                        document_type=document.document_type,
+                        is_primary=document.id == primary_document.id,
+                    )
+                )
+                inventory.append(
+                    CriteriaDocumentInventoryItem(
+                        document_id=str(document.id),
+                        display_name=display_name,
+                        document_type=document.document_type,
+                        lifecycle_status=document.lifecycle_status,
+                        is_primary=document.id == primary_document.id,
+                        parsing_status=self._normalize_inventory_parsing_status(document.parse_status),
+                        page_count=document.page_count,
+                        token_count_estimate=document.token_count_estimate,
+                    )
+                )
+
+            context = CriteriaGenerationContext(
+                vendor_review_id=str(project.id),
+                vendor_context=dict(job.vendor_context_snapshot or self._vendor_context_snapshot(project)),
+                review_profile=build_standard_review_profile(),
+                primary_document_id=str(primary_document.id),
+                active_document_ids=[str(document.id) for document in ordered_documents],
+                documents=inventory,
+                selected_kb_source_ids=list(job.selected_source_ids or []),
+            )
+            return {
+                "tenant_id": project.tenant_id,
+                "project_id": project.id,
+                "context": context,
+                "document_records": document_records,
+                "pages_by_document": pages_by_document,
+            }
+
+    @staticmethod
+    def _normalize_inventory_parsing_status(parse_status: str | None) -> str:
+        normalized = (parse_status or "").strip().upper()
+        if normalized in {"QUEUED", "PENDING"}:
+            return "pending"
+        if normalized in {"RUNNING", "PROCESSING", "VALIDATING", "CLASSIFYING_PDF", "PARSING_MISTRAL_OCR", "COUNTING_TOKENS", "PERSISTING_RESULTS", "INDEXING_DOCUMENT"}:
+            return "processing"
+        if normalized in {"COMPLETED", "PARSED", "READY_FOR_REFERENCE_SELECTION"}:
+            return "parsed"
+        if normalized == "FAILED":
+            return "failed"
+        return "pending"
 
     async def _transition_checklist_job(
         self,
@@ -3884,6 +3879,12 @@ class UploadPipelineService:
                 raise HTTPException(status_code=409, detail="Project has no uploaded document.")
             _, input_documents = self._review_input_documents(session, project, require_primary=False)
             input_document_ids = [doc.id for doc in input_documents]
+            latest_draft = self._latest_checklist_job_for_project(session, project.id)
+            draft_result = None
+            if latest_draft is not None and isinstance(latest_draft.result_json, dict):
+                with contextlib.suppress(ValidationError):
+                    draft_result = ChecklistDraftOutput.model_validate(latest_draft.result_json)
+            context_snapshot = draft_result.context_snapshot if draft_result is not None else self._vendor_context_snapshot(project)
             governance = ChecklistGovernance(
                 owner=actor_username,
                 approval_status=ApprovalStatus.APPROVED,
@@ -3892,7 +3893,15 @@ class UploadPipelineService:
                 policy_version=payload.version,
                 change_note=payload.change_note,
             )
-            checklist = ChecklistDocument(version=payload.version, governance=governance, checks=payload.checks)
+            checklist = ChecklistDocument(
+                version=payload.version,
+                governance=governance,
+                review_profile=draft_result.review_profile if draft_result is not None else None,
+                context_snapshot=context_snapshot,
+                document_inventory=list(draft_result.document_inventory) if draft_result is not None else [],
+                validation_warnings=list(draft_result.validation_warnings) if draft_result is not None else [],
+                checks=payload.checks,
+            )
             row = ApprovedChecklist(
                 tenant_id=project.tenant_id,
                 project_id=project.id,
@@ -3901,9 +3910,9 @@ class UploadPipelineService:
                 selected_source_ids=payload.selected_source_ids,
                 checklist_json=checklist.model_dump(mode="json"),
                 review_mode=DEFAULT_REVIEW_MODE,
-                profile_id=DEFAULT_PROFILE_ID,
+                profile_id=(checklist.review_profile.profile_id if checklist.review_profile is not None else DEFAULT_PROFILE_ID),
                 input_document_ids=[str(doc_id) for doc_id in input_document_ids],
-                vendor_context_snapshot=self._vendor_context_snapshot(project),
+                vendor_context_snapshot=checklist.context_snapshot or context_snapshot,
                 auto_approved=False,
                 owner=governance.owner,
                 approval_status=governance.approval_status.value,
@@ -4261,60 +4270,40 @@ class UploadPipelineService:
             run_id,
             status="RUNNING",
             stage="PREFETCHING_EVIDENCE",
-            message="Loading approved checklist and preparing evidence.",
+            message="Loading approved checklist and active review documents.",
         )
         record = await asyncio.to_thread(self._get_analysis_run_record, run_id)
         if record is None:
             return
 
         approved_checklist = record["approved_checklist"]
-        dpa_pages = record["dpa_pages"]
+        dpa_pages = record["combined_pages"]
         if not record["chunk_count"]:
             raise PermanentJobError("Document index is missing. Re-parse the document to regenerate chunks.")
 
         checks = approved_checklist.checks
         total_checks = len(checks)
         concurrency = min(6, total_checks or 1)
-        prefetch_count = 0
         completed_checks = 0
-        prefetch_semaphore = asyncio.Semaphore(concurrency)
         review_semaphore = asyncio.Semaphore(concurrency)
 
-        async def prefetch_one(check):
-            nonlocal prefetch_count
-            async with prefetch_semaphore:
-                evidence = await asyncio.to_thread(
-                    self.review_agent.prefetch_evidence,
-                    document_id=record["document_id"],
-                    query=self._build_check_query(check),
-                    sources=record["sources"],
-                    dpa_pages=dpa_pages,
-                    kb_top_k=4,
-                    dpa_top_k=6,
-                )
-            prefetch_count += 1
-            progress = 18 + int((prefetch_count / max(total_checks, 1)) * 18)
-            await self._transition_analysis_run(
-                run_id,
-                stage="PREFETCHING_EVIDENCE",
-                message=f"Prepared evidence for {prefetch_count}/{total_checks} checklist items.",
-                progress_pct=progress,
-            )
-            return evidence
+        review_scope = AgentRunScope(
+            tenant_id=record["tenant_id"],
+            project_id=record["project_id"],
+            analysis_run_id=run_id,
+        )
 
-        prefetched_evidence = await asyncio.gather(*(prefetch_one(check) for check in checks))
-
-        async def review_one(index: int, check) -> CheckAssessmentOutput:
+        async def review_one(check) -> CheckAssessmentOutput:
             nonlocal completed_checks
             async with review_semaphore:
-                result = await asyncio.to_thread(
-                    self._review_single_check_with_retry,
-                    record["document_id"],
-                    approved_checklist,
-                    check,
-                    record["sources"],
-                    dpa_pages,
-                    prefetched_evidence[index],
+                _agent_run_id, result = await asyncio.to_thread(
+                    self.phase3_agents.assess_criterion,
+                    scope=review_scope,
+                    vendor_context=record["vendor_context"],
+                    criterion=check,
+                    document_records=record["document_records"],
+                    pages_by_document=record["pages_by_document"],
+                    selected_kb_source_ids=record["selected_source_ids"],
                 )
             await asyncio.to_thread(
                 self._persist_partial_assessment,
@@ -4334,27 +4323,57 @@ class UploadPipelineService:
             )
             return result
 
-        assessments = await asyncio.gather(*(review_one(index, check) for index, check in enumerate(checks)))
+        assessments = await asyncio.gather(*(review_one(check) for check in checks))
 
         await self._transition_analysis_run(
             run_id,
             stage="SYNTHESIZING",
-            message="Synthesizing final review report.",
+            message="Synthesizing deterministic review findings.",
         )
+        check_map = {check.check_id: check for check in approved_checklist.checks}
         synthesis = await asyncio.to_thread(
-            self._synthesize_with_retry,
+            self.phase3_agents.deterministic_review_synthesis,
+            assessments,
+            check_map,
+        )
+        report = await asyncio.to_thread(
+            self._build_output_v2_report,
+            run_id,
             approved_checklist,
             assessments,
+            synthesis,
+            dpa_pages,
+        )
+        approval_pack_input = await asyncio.to_thread(
+            self._build_approval_pack_agent_input,
+            record["vendor_context"],
+            assessments,
+            check_map,
+            record.get("page_document_map", {}),
+            report,
+        )
+        await self._transition_analysis_run(
+            run_id,
+            stage="SYNTHESIZING",
+            message="Drafting approval pack narrative from validated findings.",
+            progress_pct=94,
+        )
+        approval_pack_agent_run_id, approval_pack_output = await asyncio.to_thread(
+            self.phase3_agents.draft_approval_pack,
+            scope=review_scope,
+            payload=approval_pack_input,
         )
         await asyncio.to_thread(
             self._persist_analysis_result,
             run_id,
             approved_checklist,
             assessments,
-            synthesis,
+            report,
             dpa_pages,
-            record.get("page_document_map", {}),
             started_at,
+            approval_pack_input,
+            approval_pack_output,
+            approval_pack_agent_run_id,
         )
         await self._transition_analysis_run(
             run_id,
@@ -4427,23 +4446,36 @@ class UploadPipelineService:
             chunk_count = session.execute(
                 select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id.in_([doc.id for doc in ordered_documents]))
             ).scalar_one()
+            pages_by_document = {}
+            document_records: list[DocumentRecord] = []
+            for document in ordered_documents:
+                parse_job = self._latest_parse_job_for_document(session, document.id)
+                parsed_pages_uri = (
+                    parse_job.meta_json.get("parsed_pages_uri")
+                    if parse_job is not None and isinstance(parse_job.meta_json, dict)
+                    else None
+                )
+                pages_by_document[str(document.id)] = self._load_dpa_pages(document.extracted_text_uri, parsed_pages_uri)
+                document_records.append(
+                    DocumentRecord(
+                        document_id=str(document.id),
+                        document_name=document.display_name or document.filename,
+                        document_type=document.document_type,
+                        is_primary=document.id == primary_document.id,
+                    )
+                )
             return {
+                "tenant_id": run.tenant_id,
+                "project_id": run.project_id,
                 "document_id": primary_document.id,
                 "document_ids": [document.id for document in ordered_documents],
-                "document_records": [
-                    {
-                        "document_id": str(document.id),
-                        "document_name": document.display_name or document.filename,
-                        "document_type": document.document_type,
-                        "is_primary": document.id == primary_document.id,
-                    }
-                    for document in ordered_documents
-                ],
+                "document_records": document_records,
+                "pages_by_document": pages_by_document,
                 "page_document_map": page_document_map,
+                "vendor_context": dict(run.vendor_context_snapshot or approved.vendor_context_snapshot or {}),
                 "selected_source_ids": list(approved.selected_source_ids or []),
                 "approved_checklist": ChecklistDocument.model_validate(approved.checklist_json),
-                "sources": self.review_agent.load_sources(list(approved.selected_source_ids or [])),
-                "dpa_pages": combined_pages,
+                "combined_pages": combined_pages,
                 "chunk_count": chunk_count,
             }
 
@@ -4515,16 +4547,14 @@ class UploadPipelineService:
                 last_exc = exc
         raise RuntimeError(f"Failed to synthesize final review output: {last_exc}")
 
-    def _persist_analysis_result(
+    def _build_output_v2_report(
         self,
         run_id: uuid.UUID,
         approved_checklist: ChecklistDocument,
         assessments: list[CheckAssessmentOutput],
         synthesis: ReviewSynthesisOutput,
         dpa_pages: list[DpaPageRecord],
-        page_document_map: dict[int, dict[str, Any]],
-        started_at: datetime,
-    ) -> None:
+    ) -> OutputV2Report:
         check_map = {check.check_id: check for check in approved_checklist.checks}
         final_checks: list[CheckResult] = []
         all_pages: set[int] = set()
@@ -4534,13 +4564,14 @@ class UploadPipelineService:
             check = check_map.get(assessment.check_id)
             if check is None:
                 continue
+            category_value = check.category.value if hasattr(check.category, "value") else str(check.category)
             citation_pages, evidence_spans = derive_evidence_metadata(dpa_pages, assessment.evidence_quotes)
             all_pages.update(citation_pages)
             all_spans.extend(evidence_spans)
             final_checks.append(
                 CheckResult(
                     check_id=assessment.check_id,
-                    category=check.category,
+                    category=category_value,
                     status=assessment.status,
                     risk=assessment.risk,
                     confidence=assessment.confidence,
@@ -4554,7 +4585,7 @@ class UploadPipelineService:
                 )
             )
 
-        report = OutputV2Report(
+        return OutputV2Report(
             run_id=str(run_id),
             model_version=self.settings.gemini_review_model,
             policy_version=approved_checklist.version,
@@ -4572,9 +4603,79 @@ class UploadPipelineService:
             risk_rationale=synthesis.risk_rationale,
         )
 
+    def _build_approval_pack_agent_input(
+        self,
+        vendor_context: dict[str, Any],
+        assessments: list[CheckAssessmentOutput],
+        check_map: dict[str, Any],
+        page_document_map: dict[int, dict[str, Any]],
+        report: OutputV2Report,
+    ) -> ApprovalPackAgentInput:
+        recommendation, recommendation_summary = self._derive_approval_recommendation(
+            report=report,
+            assessments=assessments,
+            check_map=check_map,
+        )
+        top_risks = self._pack_risk_rows(assessments=assessments, check_map=check_map)
+        weak_or_missing = [
+            row for row in top_risks if row["status"] in {"NON_COMPLIANT", "PARTIAL", "UNKNOWN"} or row["missing_elements"]
+        ]
+        findings = []
+        for assessment in assessments:
+            check = check_map.get(assessment.check_id)
+            findings.append(
+                {
+                    "check_id": assessment.check_id,
+                    "title": getattr(check, "title", assessment.check_id),
+                    "category": getattr(check, "category", "Uncategorized"),
+                    "status": assessment.status.value,
+                    "risk": assessment.risk.value,
+                    "confidence": assessment.confidence,
+                    "missing_elements": list(assessment.missing_elements),
+                    "risk_rationale": assessment.risk_rationale,
+                    "vendor_questions": list(assessment.vendor_questions),
+                    "recommended_action": assessment.recommended_action,
+                    "abstained": assessment.abstained,
+                    "abstain_reason": assessment.abstain_reason,
+                }
+            )
+        return ApprovalPackAgentInput(
+            vendor_context=vendor_context,
+            recommendation=recommendation,
+            recommendation_summary=recommendation_summary,
+            top_risks=top_risks[:8],
+            weak_or_missing_clauses=weak_or_missing[:10],
+            findings=findings,
+            vendor_questions=self._pack_vendor_questions(assessments=assessments, check_map=check_map),
+            evidence=self._pack_evidence(
+                assessments=assessments,
+                check_map=check_map,
+                page_document_map=page_document_map,
+            ),
+        )
+
+    def _persist_analysis_result(
+        self,
+        run_id: uuid.UUID,
+        approved_checklist: ChecklistDocument,
+        assessments: list[CheckAssessmentOutput],
+        report: OutputV2Report,
+        dpa_pages: list[DpaPageRecord],
+        started_at: datetime,
+        approval_pack_input: ApprovalPackAgentInput,
+        approval_pack_output: ApprovalPackAgentOutput,
+        approval_pack_agent_run_id: str,
+    ) -> None:
+        check_map = {check.check_id: check for check in approved_checklist.checks}
         with self.session_factory() as session:
             for assessment in assessments:
-                self._upsert_finding(session, run_id, check_map, assessment, dpa_pages)
+                self._upsert_finding(
+                    session,
+                    run_id,
+                    check_map,
+                    assessment,
+                    dpa_pages,
+                )
 
             existing_report = session.get(AnalysisReport, run_id)
             if existing_report is None:
@@ -4608,41 +4709,33 @@ class UploadPipelineService:
                 },
             )
             if project is not None:
-                self._persist_approval_pack_shell(
+                self._persist_approval_pack(
                     session,
                     project=project,
                     run=run,
-                    approved_checklist=approved_checklist,
                     report=report,
-                    assessments=assessments,
-                    check_map=check_map,
-                    page_document_map=page_document_map,
+                    approval_pack_input=approval_pack_input,
+                    approval_pack_output=approval_pack_output,
+                    approval_pack_agent_run_id=approval_pack_agent_run_id,
                 )
             self._sync_project_state(session, run.project_id)
             session.commit()
 
-    def _persist_approval_pack_shell(
+    def _persist_approval_pack(
         self,
         session: Session,
         *,
         project: Project,
         run: AnalysisRun,
-        approved_checklist: ChecklistDocument,
         report: OutputV2Report,
-        assessments: list[CheckAssessmentOutput],
-        check_map: dict[str, Any],
-        page_document_map: dict[int, dict[str, Any]],
+        approval_pack_input: ApprovalPackAgentInput,
+        approval_pack_output: ApprovalPackAgentOutput,
+        approval_pack_agent_run_id: str,
     ) -> ApprovalPack:
-        recommendation, recommendation_summary = self._derive_approval_recommendation(
-            report=report,
-            assessments=assessments,
-            check_map=check_map,
-        )
-        risk_rows = self._pack_risk_rows(assessments=assessments, check_map=check_map)
-        weak_rows = [
-            row for row in risk_rows
-            if row["status"] in {"NON_COMPLIANT", "PARTIAL", "UNKNOWN"} or row["missing_elements"]
-        ]
+        recommendation = approval_pack_input.recommendation
+        recommendation_summary = approval_pack_input.recommendation_summary
+        risk_rows = list(approval_pack_input.top_risks)
+        weak_rows = list(approval_pack_input.weak_or_missing_clauses)
         security_rows = [
             row for row in risk_rows
             if "security" in row["category"].lower() or "security" in row["title"].lower() or "tom" in row["title"].lower()
@@ -4655,7 +4748,9 @@ class UploadPipelineService:
             row for row in risk_rows
             if "ai" in f"{row['category']} {row['title']} {row['rationale']}".lower()
         ]
-        vendor_questions = self._pack_vendor_questions(assessments=assessments, check_map=check_map)
+        vendor_questions = list(approval_pack_output.vendor_follow_up_questions or approval_pack_input.vendor_questions)
+        internal_memo = approval_pack_output.internal_memo
+        evidence_rows = list(approval_pack_input.evidence)
         pack_json = {
             "vendor_review_id": str(project.id),
             "project_id": str(project.id),
@@ -4673,9 +4768,12 @@ class UploadPipelineService:
                 "summary": report.overall.summary,
                 "highlights": report.highlights,
                 "next_actions": report.next_actions,
+                "narrative": approval_pack_output.executive_summary,
             },
             "top_risks": risk_rows[:8],
+            "top_risks_narrative": approval_pack_output.top_risks,
             "weak_clauses": weak_rows[:10],
+            "weak_clauses_narrative": approval_pack_output.weak_or_missing_clauses,
             "security_toms": {
                 "summary": self._pack_section_summary(security_rows, "No security/TOM-specific gaps were identified in the completed review."),
                 "items": security_rows[:8],
@@ -4690,8 +4788,9 @@ class UploadPipelineService:
                 "items": ai_rows[:8],
             },
             "vendor_questions": vendor_questions,
-            "internal_memo": self._pack_internal_memo(project, report, recommendation, vendor_questions),
-            "evidence": self._pack_evidence(assessments=assessments, check_map=check_map, page_document_map=page_document_map),
+            "internal_memo": internal_memo,
+            "evidence": evidence_rows,
+            "confidence_notes": approval_pack_output.confidence_notes,
             "disclaimer": (
                 "This Approval Pack is a deterministic summary of the stored DPA review findings. "
                 "It is not legal advice and should be reviewed by the accountable legal, privacy, or security owner."
@@ -4709,7 +4808,7 @@ class UploadPipelineService:
             project_id=project.id,
             analysis_run_id=run.id,
             approved_checklist_id=run.approved_checklist_id,
-            version="approval_pack_shell_v1",
+            version="approval_pack_v1",
             status="published",
             recommendation=recommendation,
             recommendation_summary=recommendation_summary,
@@ -4722,6 +4821,44 @@ class UploadPipelineService:
         )
         session.add(pack)
         session.flush()
+        action_pack_started_at = run.completed_at or now
+        session.add(
+            ApprovalPackStageOutput(
+                tenant_id=project.tenant_id,
+                project_id=project.id,
+                analysis_run_id=run.id,
+                approval_pack_id=pack.id,
+                agent_run_id=uuid.UUID(approval_pack_agent_run_id),
+                stage_name="action_pack",
+                stage_version="approval_pack_agent_v1",
+                model_version=self.settings.gemini_approval_pack_model or self.settings.gemini_review_model,
+                input_json=approval_pack_input.model_dump(mode="json"),
+                output_json=approval_pack_output.model_dump(mode="json"),
+                status="completed",
+                started_at=action_pack_started_at,
+                completed_at=now,
+            )
+        )
+        session.add(
+            ApprovalPackStageOutput(
+                tenant_id=project.tenant_id,
+                project_id=project.id,
+                analysis_run_id=run.id,
+                approval_pack_id=pack.id,
+                agent_run_id=None,
+                stage_name="assembler",
+                stage_version="approval_pack_assembler_v1",
+                model_version=None,
+                input_json={
+                    "report_summary": report.overall.model_dump(mode="json"),
+                    "approval_pack_agent_output": approval_pack_output.model_dump(mode="json"),
+                },
+                output_json=pack_json,
+                status="completed",
+                started_at=now,
+                completed_at=now,
+            )
+        )
         project.current_approval_pack_id = pack.id
         project.current_recommendation = recommendation
         return pack
@@ -4801,6 +4938,9 @@ class UploadPipelineService:
     ) -> list[str]:
         questions: list[str] = []
         for assessment in assessments:
+            for question in assessment.vendor_questions:
+                if question.strip():
+                    questions.append(question.strip())
             if assessment.status.value == "COMPLIANT" and not assessment.missing_elements:
                 continue
             check = check_map.get(assessment.check_id)
@@ -4825,6 +4965,15 @@ class UploadPipelineService:
         evidence: list[dict[str, Any]] = []
         for assessment in assessments:
             check = check_map.get(assessment.check_id)
+            for item in assessment.evidence:
+                payload = item.model_dump(mode="json")
+                payload.update(
+                    {
+                        "check_id": assessment.check_id,
+                        "title": getattr(check, "title", assessment.check_id),
+                    }
+                )
+                evidence.append(payload)
             for quote in assessment.evidence_quotes:
                 page_meta = page_document_map.get(quote.page, {})
                 evidence.append(
@@ -4875,7 +5024,6 @@ class UploadPipelineService:
             self._upsert_finding(session, run_id, check_map, assessment, dpa_pages)
             run = session.get(AnalysisRun, run_id)
             if run is not None:
-                run.updated_at = utcnow()
                 self._sync_project_state(session, run.project_id)
             session.commit()
 
@@ -4890,20 +5038,27 @@ class UploadPipelineService:
         check = check_map.get(assessment.check_id)
         if check is None:
             return
+        category_value = check.category.value if hasattr(check.category, "value") else str(check.category)
+        severity_value = getattr(check, "severity", None)
+        if hasattr(severity_value, "value"):
+            severity_value = severity_value.value
         citation_pages, evidence_spans = derive_evidence_metadata(dpa_pages, assessment.evidence_quotes)
         finding = session.execute(
             select(Finding).where(Finding.run_id == run_id, Finding.check_id == assessment.check_id)
         ).scalars().first()
         if finding is None:
-            finding = Finding(run_id=run_id, check_id=assessment.check_id, category=check.category)
+            finding = Finding(run_id=run_id, check_id=assessment.check_id, category=category_value)
             session.add(finding)
-        finding.category = check.category
+        finding.category = category_value
         finding.status = assessment.status.value
         finding.risk = assessment.risk.value
         finding.confidence = assessment.confidence
         finding.abstained = assessment.abstained
         finding.abstain_reason = assessment.abstain_reason
         finding.risk_rationale = assessment.risk_rationale
+        finding.severity = str(severity_value) if severity_value else None
+        finding.recommendation = assessment.recommended_action
+        finding.evidence_json = [item.model_dump(mode="json") for item in assessment.evidence]
         finding.review_required = self._derive_review_required(assessment, evidence_spans)
         finding.review_state = ReviewState.PENDING.value
         finding.assessment_json = assessment.model_dump(mode="json")

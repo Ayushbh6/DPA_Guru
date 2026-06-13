@@ -52,7 +52,7 @@ export default function Navbar() {
   const pathname = usePathname();
   const { user, logoutUser } = useAuth();
 
-  if (pathname.startsWith("/projects")) {
+  if (pathname.startsWith("/projects") || pathname.startsWith("/vendor-reviews")) {
     return null;
   }
 
@@ -75,7 +75,7 @@ export default function Navbar() {
             style={{ color: 'var(--accent)' }}
           />
           <span className="text-sm font-medium tracking-wide">
-            Merlin AI
+            Checker
           </span>
         </Link>
         <div className="flex items-center gap-4">

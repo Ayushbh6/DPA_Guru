@@ -408,7 +408,7 @@ export function ReviewReportView({
           </div>
 
           <Link
-            href={`/projects/${projectId}/review`}
+            href={`/vendor-reviews/${projectId}/review`}
             className="inline-flex items-center justify-between border px-4 py-3 text-sm transition-colors"
             style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
           >

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from dpa_checklist import ChecklistDocument, ChecklistDraftOutput, ChecklistItem
 from dpa_schemas import CheckAssessmentOutput, EvidenceSpan, OutputV2Report
 
@@ -21,6 +21,22 @@ UploadStage = Literal[
 ]
 
 JobStatus = Literal["QUEUED", "RUNNING", "COMPLETED", "FAILED"]
+BusinessCriticality = Literal["low", "medium", "high"]
+VendorRegion = Literal["EU_EEA", "US", "UK", "OTHER", "UNKNOWN"]
+VendorDocumentType = Literal[
+    "main_dpa",
+    "privacy_policy",
+    "security_toms",
+    "subprocessors",
+    "data_transfer_terms",
+    "ai_terms",
+    "service_terms",
+    "security_certification",
+    "custom_agreement",
+    "other",
+]
+DocumentLifecycleStatus = Literal["active", "archived", "deleted"]
+ApprovalRecommendation = Literal["approve", "approve_with_conditions", "escalate", "reject"]
 ProjectStatus = Literal[
     "EMPTY",
     "UPLOADING",
@@ -88,15 +104,80 @@ class UploadBootstrapResponse(BaseModel):
     job_id: uuid.UUID
     document_id: uuid.UUID
     project_id: uuid.UUID
+    vendor_review_id: uuid.UUID
     status: str
     ws_url: str
     status_url: str
 
 
+class VendorReviewContext(BaseModel):
+    vendor_name: str | None = Field(default=None, max_length=255)
+    vendor_website: str | None = None
+    tool_or_service_name: str | None = Field(default=None, max_length=255)
+    intended_use_case: str | None = None
+    data_types: list[str] = Field(default_factory=list)
+    shares_personal_data: bool = False
+    shares_customer_data: bool = False
+    shares_employee_data: bool = False
+    shares_sensitive_data: bool = False
+    has_ai_features: bool = False
+    business_criticality: BusinessCriticality | None = None
+    vendor_region: VendorRegion | None = None
+    processes_eu_personal_data: bool | None = None
+    transfers_data_outside_eea: bool | None = None
+    internal_owner: str | None = Field(default=None, max_length=255)
+    review_deadline: date | None = None
+    context_completed_at: datetime | None = None
+
+    @field_validator("vendor_name", "vendor_website", "tool_or_service_name", "intended_use_case", "internal_owner", mode="before")
+    @classmethod
+    def strip_optional_text(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @field_validator("data_types", mode="before")
+    @classmethod
+    def normalize_data_types(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+
+class VendorReviewCreationContext(BaseModel):
+    vendor_name: str = Field(min_length=1, max_length=255)
+    intended_use_case: str = Field(min_length=1)
+    shares_personal_data: bool
+    business_criticality: BusinessCriticality
+    vendor_website: str | None = None
+    tool_or_service_name: str | None = Field(default=None, max_length=255)
+
+    @field_validator("vendor_name", "intended_use_case", "vendor_website", "tool_or_service_name", mode="before")
+    @classmethod
+    def strip_creation_text(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
 class ProjectSummary(BaseModel):
+    vendor_review_id: uuid.UUID
     project_id: uuid.UUID
     name: str
     status: ProjectStatus | str
+    review_type: str = "vendor_dpa_review"
+    vendor_name: str | None = None
+    tool_or_service_name: str | None = None
+    intended_use_case: str | None = None
+    business_criticality: BusinessCriticality | str | None = None
+    current_recommendation: ApprovalRecommendation | str | None = None
+    document_count: int = 0
+    primary_document_id: uuid.UUID | None = None
+    primary_document_filename: str | None = None
     created_at: datetime
     updated_at: datetime
     last_activity_at: datetime
@@ -109,6 +190,18 @@ class ProjectDocumentSummary(BaseModel):
     filename: str
     mime_type: str
     page_count: int
+    document_type: VendorDocumentType | str = "main_dpa"
+    display_name: str | None = None
+    description: str | None = None
+    is_primary: bool = False
+    source_kind: str = "uploaded"
+    source_url: str | None = None
+    lifecycle_status: DocumentLifecycleStatus | str = "active"
+    active: bool = True
+    archived_at: datetime | None = None
+    archive_expires_at: datetime | None = None
+    deleted_at: datetime | None = None
+    hard_deleted_at: datetime | None = None
     parse_status: str | None = None
     parser_route: str | None = None
     pdf_classification: str | None = None
@@ -119,8 +212,11 @@ class ProjectDocumentSummary(BaseModel):
 
 class AnalysisRunSummary(BaseModel):
     analysis_run_id: uuid.UUID
+    vendor_review_id: uuid.UUID
     project_id: uuid.UUID
     document_id: uuid.UUID
+    primary_document_id: uuid.UUID | None = None
+    input_document_ids: list[uuid.UUID] = Field(default_factory=list)
     status: AnalysisRunStatus | str
     model_version: str
     policy_version: str
@@ -138,10 +234,18 @@ class AnalysisRunSummary(BaseModel):
 
 class ApprovedChecklistSummary(BaseModel):
     approved_checklist_id: uuid.UUID
+    vendor_review_id: uuid.UUID
     project_id: uuid.UUID
     document_id: uuid.UUID
+    input_document_ids: list[uuid.UUID] = Field(default_factory=list)
     version: str
     selected_source_ids: list[str]
+    review_mode: str = "vendor_dpa_review"
+    profile_id: str = "standard_vendor_dpa_v1"
+    auto_approved: bool = False
+    stale_at: datetime | None = None
+    stale_reason: str | None = None
+    stale_document_ids: list[uuid.UUID] = Field(default_factory=list)
     owner: str
     approval_status: str
     approved_by: str | None = None
@@ -152,6 +256,8 @@ class ApprovedChecklistSummary(BaseModel):
 
 class ProjectDetail(BaseModel):
     project: ProjectSummary
+    vendor_context: VendorReviewContext
+    documents: list[ProjectDocumentSummary] = Field(default_factory=list)
     document: ProjectDocumentSummary | None = None
     parse_job: UploadJobSnapshot | None = None
     checklist_draft: ChecklistDraftSnapshot | None = None
@@ -161,6 +267,25 @@ class ProjectDetail(BaseModel):
 
 class CreateProjectRequest(BaseModel):
     name: str | None = Field(default=None, max_length=255)
+
+
+class CreateVendorReviewRequest(VendorReviewCreationContext):
+    name: str | None = Field(default=None, max_length=255)
+
+
+class UpdateVendorReviewRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=255)
+    vendor_context: VendorReviewContext | None = None
+
+
+class UpdateDocumentRequest(BaseModel):
+    document_type: VendorDocumentType | None = None
+    display_name: str | None = Field(default=None, max_length=512)
+    description: str | None = None
+
+
+class MarkPrimaryDocumentRequest(BaseModel):
+    replacement_document_id: uuid.UUID | None = None
 
 
 class LoginRequest(BaseModel):
@@ -195,10 +320,16 @@ class ChecklistDraftRequest(BaseModel):
     user_instruction: str | None = None
 
 
+class VendorCriteriaDraftRequest(BaseModel):
+    user_instruction: str | None = None
+
+
 class ChecklistDraftBootstrapResponse(BaseModel):
     checklist_draft_id: uuid.UUID
     document_id: uuid.UUID
     project_id: uuid.UUID
+    vendor_review_id: uuid.UUID
+    input_document_ids: list[uuid.UUID] = Field(default_factory=list)
     status: str
     ws_url: str
     status_url: str
@@ -210,6 +341,8 @@ class ChecklistDraftSnapshot(BaseModel):
     checklist_draft_id: uuid.UUID
     document_id: uuid.UUID
     project_id: uuid.UUID
+    vendor_review_id: uuid.UUID
+    input_document_ids: list[uuid.UUID] = Field(default_factory=list)
     status: str
     stage: str
     progress_pct: int
@@ -226,6 +359,7 @@ class ReviewSetupResponse(BaseModel):
     analysis_run_id: uuid.UUID
     document_id: uuid.UUID
     project_id: uuid.UUID
+    vendor_review_id: uuid.UUID
     selected_source_ids: list[str]
     status: str
 
@@ -266,6 +400,27 @@ class AnalysisFindingDetail(BaseModel):
 class AnalysisRunReportResponse(BaseModel):
     report: OutputV2Report
     findings: list[AnalysisFindingDetail] = Field(default_factory=list)
+
+
+class ApprovalPackResponse(BaseModel):
+    approval_pack_id: uuid.UUID
+    vendor_review_id: uuid.UUID
+    project_id: uuid.UUID
+    analysis_run_id: uuid.UUID | None = None
+    approved_checklist_id: uuid.UUID | None = None
+    version: str
+    status: str
+    recommendation: ApprovalRecommendation | str
+    recommendation_summary: str
+    confidence: float
+    review_required: bool
+    pack: dict[str, Any]
+    stale_at: datetime | None = None
+    stale_reason: str | None = None
+    stale_document_ids: list[uuid.UUID] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+    published_at: datetime | None = None
 
 
 class RenameProjectRequest(BaseModel):

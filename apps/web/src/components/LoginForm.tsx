@@ -42,9 +42,9 @@ export default function LoginForm({ nextPath }: { nextPath: string }) {
         <div className="mb-2 text-xs uppercase tracking-[0.3em]" style={{ color: "var(--accent)" }}>
           Private Alpha
         </div>
-        <h1 className="text-3xl font-semibold">Log in to Merlin AI</h1>
+        <h1 className="text-3xl font-semibold">Log in to Checker</h1>
         <p className="mt-3 text-sm" style={{ color: "var(--text-2)" }}>
-          Use the tester credentials you were given to access the DPA review workspace.
+          Use the tester credentials you were given to access the Vendor Review workspace.
         </p>
       </div>
 

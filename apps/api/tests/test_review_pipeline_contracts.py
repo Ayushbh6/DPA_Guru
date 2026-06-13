@@ -74,6 +74,7 @@ def _settings() -> Settings:
         worker_retry_backoff_first_seconds=30,
         worker_retry_backoff_second_seconds=120,
         deleted_project_retention_days=30,
+        document_archive_retention_days=30,
         repo_root=Path("/tmp/repo"),
     )
 

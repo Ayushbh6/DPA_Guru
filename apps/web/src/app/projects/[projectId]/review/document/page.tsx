@@ -15,7 +15,10 @@ const VIEWPORT_SCALE = 1.35;
 export default function ReviewDocumentViewerPage() {
   const searchParams = useSearchParams();
   const { projectId, detail } = useProject();
-  const document = detail?.document;
+  const requestedDocumentId = searchParams.get("documentId");
+  const document = requestedDocumentId
+    ? detail?.documents?.find((item) => item.document_id === requestedDocumentId) || detail?.document
+    : detail?.document;
   const requestedPageParam = Number(searchParams.get("page") || "1");
   const requestedPage = Number.isFinite(requestedPageParam) && requestedPageParam > 0 ? Math.floor(requestedPageParam) : 1;
 
@@ -43,7 +46,7 @@ export default function ReviewDocumentViewerPage() {
     async function renderPdfPage() {
       if (!proxyUrl || !canvasRef.current) {
         if (!cancelled) {
-          setError("Project document is unavailable.");
+          setError("Document is unavailable.");
           setLoading(false);
         }
         return;
@@ -115,7 +118,7 @@ export default function ReviewDocumentViewerPage() {
   if (!document) {
     return (
       <section className="border px-6 py-8" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)', color: 'var(--text-2)' }}>
-        No project document was found.
+        No document was found.
       </section>
     );
   }
@@ -128,7 +131,7 @@ export default function ReviewDocumentViewerPage() {
       <section className="border px-6 py-5" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}>
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>DPA Viewer</div>
+            <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Document Viewer</div>
             <h2 className="mt-2 text-2xl font-semibold" style={{ color: 'var(--text)' }}>{document.filename}</h2>
             <div className="mt-2 text-sm" style={{ color: 'var(--text-2)' }}>
               Page {currentPage}
@@ -157,7 +160,7 @@ export default function ReviewDocumentViewerPage() {
               <ChevronRight className="h-4 w-4" />
             </button>
             <Link
-              href={`/projects/${projectId}/review/report`}
+              href={`/vendor-reviews/${projectId}/review/report`}
               className="inline-flex items-center gap-2 border px-4 py-2.5 text-sm transition-colors"
               style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
             >

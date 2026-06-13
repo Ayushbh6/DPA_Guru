@@ -23,9 +23,14 @@ from .schemas import (
     ChecklistDraftRequest,
     CreateAnalysisRunRequest,
     CreateProjectRequest,
+    CreateVendorReviewRequest,
     LoginRequest,
+    MarkPrimaryDocumentRequest,
     RenameProjectRequest,
     ReviewSetupRequest,
+    UpdateDocumentRequest,
+    UpdateVendorReviewRequest,
+    VendorCriteriaDraftRequest,
 )
 from .storage import ArtifactStore
 
@@ -262,6 +267,315 @@ def create_app() -> FastAPI:
         actor = require_actor(request)
         return AuthUserResponse(username=actor.username)
 
+    @app.post("/v1/vendor-reviews")
+    async def create_vendor_review(payload: CreateVendorReviewRequest, request: Request):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        return await asyncio.to_thread(
+            service.create_vendor_review,
+            payload,
+            actor_username=actor.username,
+            trace_id=request_id_for(request),
+        )
+
+    @app.get("/v1/vendor-reviews")
+    async def list_vendor_reviews(request: Request):
+        actor = require_actor(request)
+        return await asyncio.to_thread(service.list_vendor_reviews, actor_username=actor.username)
+
+    @app.get("/v1/vendor-reviews/{review_id}")
+    async def get_vendor_review(review_id: uuid.UUID, request: Request):
+        actor = require_actor(request)
+        detail = await asyncio.to_thread(service.get_vendor_review_detail, review_id, actor_username=actor.username)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Vendor Review not found.")
+        return detail
+
+    @app.patch("/v1/vendor-reviews/{review_id}")
+    async def update_vendor_review(review_id: uuid.UUID, payload: UpdateVendorReviewRequest, request: Request):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        return await asyncio.to_thread(
+            service.update_vendor_review,
+            review_id,
+            payload,
+            actor_username=actor.username,
+            trace_id=request_id_for(request),
+        )
+
+    @app.delete("/v1/vendor-reviews/{review_id}")
+    async def delete_vendor_review(review_id: uuid.UUID, request: Request):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        await asyncio.to_thread(
+            service.delete_project,
+            review_id,
+            actor_username=actor.username,
+            trace_id=request_id_for(request),
+        )
+        return {"status": "ok"}
+
+    @app.get("/v1/vendor-reviews/{review_id}/documents")
+    async def list_vendor_review_documents(review_id: uuid.UUID, request: Request):
+        actor = require_actor(request)
+        return await asyncio.to_thread(service.list_review_documents, review_id, actor_username=actor.username)
+
+    @app.post("/v1/vendor-reviews/{review_id}/documents")
+    async def upload_vendor_review_document(
+        review_id: uuid.UUID,
+        request: Request,
+        file: UploadFile = File(...),
+        document_type: str = Form("main_dpa"),
+        display_name: str | None = Form(None),
+        description: str | None = Form(None),
+        make_primary: bool = Form(False),
+    ):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        remote_ip = request_ip(request)
+        await enforce_rate_limit(
+            bucket="upload_user",
+            subject=actor.username,
+            limit=settings.upload_rate_limit_per_user,
+            window_seconds=settings.upload_rate_limit_window_seconds,
+            request=request,
+            actor_username=actor.username,
+            detail="Upload rate limit reached for this account.",
+            audit_callback=lambda retry_after: asyncio.to_thread(
+                service.record_project_policy_event,
+                project_id=review_id,
+                actor_username=actor.username,
+                trace_id=request_id_for(request),
+                event_name="document_upload_rate_limited",
+                metadata_json={
+                    "project_id": str(review_id),
+                    "vendor_review_id": str(review_id),
+                    "bucket": "user",
+                    "remote_ip": remote_ip,
+                    "retry_after_seconds": retry_after,
+                },
+            ),
+        )
+        await enforce_rate_limit(
+            bucket="upload_ip",
+            subject=remote_ip,
+            limit=settings.upload_rate_limit_per_ip,
+            window_seconds=settings.upload_rate_limit_window_seconds,
+            request=request,
+            actor_username=actor.username,
+            detail="Upload rate limit reached from this IP.",
+            audit_callback=lambda retry_after: asyncio.to_thread(
+                service.record_project_policy_event,
+                project_id=review_id,
+                actor_username=actor.username,
+                trace_id=request_id_for(request),
+                event_name="document_upload_rate_limited",
+                metadata_json={
+                    "project_id": str(review_id),
+                    "vendor_review_id": str(review_id),
+                    "bucket": "ip",
+                    "remote_ip": remote_ip,
+                    "retry_after_seconds": retry_after,
+                },
+            ),
+        )
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="Filename is required.")
+        content_length_header = request.headers.get("content-length")
+        if content_length_header:
+            try:
+                content_length = int(content_length_header)
+            except ValueError:
+                content_length = None
+            size_limit = settings.max_upload_mb * 1024 * 1024
+            if content_length is not None and content_length > size_limit:
+                await asyncio.to_thread(
+                    service.record_upload_policy_event,
+                    project_id=review_id,
+                    actor_username=actor.username,
+                    trace_id=request_id_for(request),
+                    event_name="document_upload_quota_denied_file_size",
+                    metadata_json={
+                        "project_id": str(review_id),
+                        "vendor_review_id": str(review_id),
+                        "quota_mb": settings.max_upload_mb,
+                        "content_length": content_length,
+                        "enforced_via": "content_length_header",
+                    },
+                )
+                raise HTTPException(status_code=400, detail=f"File exceeds {settings.max_upload_mb}MB limit.")
+        data = await file.read()
+        return await service.create_upload(
+            project_id=review_id,
+            filename=file.filename,
+            mime_type=file.content_type,
+            data=data,
+            actor_username=actor.username,
+            trace_id=request_id_for(request),
+            document_type=document_type,
+            display_name=display_name,
+            description=description,
+            make_primary=make_primary,
+        )
+
+    @app.patch("/v1/vendor-reviews/{review_id}/documents/{document_id}")
+    async def update_vendor_review_document(
+        review_id: uuid.UUID,
+        document_id: uuid.UUID,
+        payload: UpdateDocumentRequest,
+        request: Request,
+    ):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        return await asyncio.to_thread(
+            service.update_review_document,
+            review_id,
+            document_id,
+            payload,
+            actor_username=actor.username,
+            trace_id=request_id_for(request),
+        )
+
+    @app.post("/v1/vendor-reviews/{review_id}/documents/{document_id}/primary")
+    async def mark_vendor_review_document_primary(review_id: uuid.UUID, document_id: uuid.UUID, request: Request):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        return await asyncio.to_thread(
+            service.mark_review_document_primary,
+            review_id,
+            document_id,
+            actor_username=actor.username,
+            trace_id=request_id_for(request),
+        )
+
+    @app.post("/v1/vendor-reviews/{review_id}/documents/{document_id}/archive")
+    async def archive_vendor_review_document(
+        review_id: uuid.UUID,
+        document_id: uuid.UUID,
+        request: Request,
+        payload: MarkPrimaryDocumentRequest | None = None,
+    ):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        return await asyncio.to_thread(
+            service.archive_review_document,
+            review_id,
+            document_id,
+            actor_username=actor.username,
+            replacement_document_id=payload.replacement_document_id if payload else None,
+            trace_id=request_id_for(request),
+        )
+
+    @app.post("/v1/vendor-reviews/{review_id}/documents/{document_id}/restore")
+    async def restore_vendor_review_document(review_id: uuid.UUID, document_id: uuid.UUID, request: Request):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        return await asyncio.to_thread(
+            service.restore_review_document,
+            review_id,
+            document_id,
+            actor_username=actor.username,
+            trace_id=request_id_for(request),
+        )
+
+    @app.delete("/v1/vendor-reviews/{review_id}/documents/{document_id}")
+    async def hard_delete_vendor_review_document(
+        review_id: uuid.UUID,
+        document_id: uuid.UUID,
+        request: Request,
+        replacement_document_id: uuid.UUID | None = None,
+    ):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        return await asyncio.to_thread(
+            service.hard_delete_review_document,
+            review_id,
+            document_id,
+            actor_username=actor.username,
+            replacement_document_id=replacement_document_id,
+            trace_id=request_id_for(request),
+        )
+
+    @app.post("/v1/vendor-reviews/{review_id}/criteria-drafts")
+    async def create_vendor_criteria_draft(review_id: uuid.UUID, payload: VendorCriteriaDraftRequest, request: Request):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        await enforce_rate_limit(
+            bucket="checklist_user",
+            subject=actor.username,
+            limit=settings.checklist_rate_limit_per_user,
+            window_seconds=settings.checklist_rate_limit_window_seconds,
+            request=request,
+            actor_username=actor.username,
+            detail="Criteria generation is rate limited for this account.",
+            audit_callback=lambda retry_after: asyncio.to_thread(
+                service.record_project_policy_event,
+                project_id=review_id,
+                actor_username=actor.username,
+                trace_id=request_id_for(request),
+                event_name="criteria_rate_limited",
+                metadata_json={
+                    "project_id": str(review_id),
+                    "vendor_review_id": str(review_id),
+                    "retry_after_seconds": retry_after,
+                },
+            ),
+        )
+        return await service.create_vendor_criteria_draft(
+            review_id,
+            user_instruction=payload.user_instruction,
+            actor_username=actor.username,
+            trace_id=request_id_for(request),
+        )
+
+    @app.put("/v1/vendor-reviews/{review_id}/approved-criteria")
+    async def approve_vendor_criteria(review_id: uuid.UUID, payload: ApproveChecklistRequest, request: Request):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        return await asyncio.to_thread(
+            service.approve_checklist,
+            review_id,
+            payload,
+            actor_username=actor.username,
+            trace_id=request_id_for(request),
+        )
+
+    @app.post("/v1/vendor-reviews/{review_id}/review-runs")
+    async def create_vendor_review_run(review_id: uuid.UUID, request: Request):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        await enforce_rate_limit(
+            bucket="analysis_user",
+            subject=actor.username,
+            limit=settings.analysis_rate_limit_per_user,
+            window_seconds=settings.analysis_rate_limit_window_seconds,
+            request=request,
+            actor_username=actor.username,
+            detail="Final review is rate limited for this account.",
+            audit_callback=lambda retry_after: asyncio.to_thread(
+                service.record_project_policy_event,
+                project_id=review_id,
+                actor_username=actor.username,
+                trace_id=request_id_for(request),
+                event_name="analysis_rate_limited",
+                metadata_json={
+                    "project_id": str(review_id),
+                    "vendor_review_id": str(review_id),
+                    "retry_after_seconds": retry_after,
+                },
+            ),
+        )
+        return await service.create_analysis_run(
+            CreateAnalysisRunRequest(project_id=review_id),
+            actor_username=actor.username,
+            trace_id=request_id_for(request),
+        )
+
+    @app.get("/v1/review-runs/{run_id}/approval-pack")
+    async def get_review_run_approval_pack(run_id: uuid.UUID, request: Request):
+        actor = require_actor(request)
+        return await asyncio.to_thread(service.get_approval_pack, run_id, actor_username=actor.username)
+
     @app.post("/v1/projects")
     async def create_project(request: Request, payload: CreateProjectRequest | None = None):
         auth_manager.require_request_origin(request)
@@ -341,7 +655,15 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     @app.post("/v1/uploads")
-    async def create_upload(request: Request, project_id: uuid.UUID = Form(...), file: UploadFile = File(...)):
+    async def create_upload(
+        request: Request,
+        project_id: uuid.UUID = Form(...),
+        file: UploadFile = File(...),
+        document_type: str = Form("main_dpa"),
+        display_name: str | None = Form(None),
+        description: str | None = Form(None),
+        make_primary: bool = Form(False),
+    ):
         auth_manager.require_request_origin(request)
         actor = require_actor(request)
         remote_ip = request_ip(request)
@@ -421,6 +743,10 @@ def create_app() -> FastAPI:
             data=data,
             actor_username=actor.username,
             trace_id=request_id_for(request),
+            document_type=document_type,
+            display_name=display_name,
+            description=description,
+            make_primary=make_primary,
         )
 
     @app.get("/v1/uploads/{job_id}")

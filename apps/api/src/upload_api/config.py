@@ -152,6 +152,7 @@ class Settings:
     worker_retry_backoff_first_seconds: int
     worker_retry_backoff_second_seconds: int
     deleted_project_retention_days: int
+    document_archive_retention_days: int
     repo_root: Path
 
 
@@ -239,5 +240,6 @@ def load_settings() -> Settings:
         worker_retry_backoff_first_seconds=int(os.getenv("WORKER_RETRY_BACKOFF_FIRST_SECONDS", "30")),
         worker_retry_backoff_second_seconds=int(os.getenv("WORKER_RETRY_BACKOFF_SECOND_SECONDS", "120")),
         deleted_project_retention_days=int(os.getenv("DELETED_PROJECT_RETENTION_DAYS", "30")),
+        document_archive_retention_days=int(os.getenv("DOCUMENT_ARCHIVE_RETENTION_DAYS", "30")),
         repo_root=repo_root,
     )

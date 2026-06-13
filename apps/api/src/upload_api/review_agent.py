@@ -544,8 +544,6 @@ class ReviewAgent:
             )
         except Exception:
             results = []
-        if results:
-            return results
 
         fallback: list[tuple[float, RetrievedDpaSpan]] = []
         for page in dpa_pages:
@@ -565,7 +563,18 @@ class ReviewAgent:
                 )
             )
         fallback.sort(key=lambda item: item[0], reverse=True)
-        return [item[1] for item in fallback[: max(1, min(top_k, 12))]]
+        fallback_results = [item[1] for item in fallback[: max(1, min(top_k, 12))]]
+        if not results:
+            return fallback_results
+
+        merged: list[RetrievedDpaSpan] = []
+        seen: set[str] = set()
+        for item in [*results, *fallback_results]:
+            if item.provenance_id in seen:
+                continue
+            seen.add(item.provenance_id)
+            merged.append(item)
+        return merged[: max(1, min(top_k, 12))]
 
     def _load_sources(self, selected_source_ids: list[str]) -> list[SourceRecord]:
         manifest_path = self._settings.repo_root / "kb" / "manifest.json"

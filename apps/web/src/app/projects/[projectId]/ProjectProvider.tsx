@@ -6,7 +6,7 @@ import {
   type AnalysisRunStatus,
   checklistDraftEventsUrl,
   getProject,
-  listProjects,
+  listVendorReviews,
   listReferenceSources,
   type ChecklistDraftStatus,
   type ProjectDetail,
@@ -77,7 +77,7 @@ export function ProjectProvider({
 
   async function refreshSidebar() {
     try {
-      const items = await listProjects();
+      const items = await listVendorReviews();
       setProjects(items);
     } catch {
       // Background refresh, ignore errors
@@ -107,7 +107,7 @@ export function ProjectProvider({
       try {
         const [projectDetail, projectList, referenceSources] = await Promise.all([
           getProject(projectId),
-          listProjects(),
+          listVendorReviews(),
           listReferenceSources(),
         ]);
         if (cancelled) return;

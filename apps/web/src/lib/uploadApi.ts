@@ -41,12 +41,62 @@ export type UploadBootstrapResponse = {
   job_id: string;
   document_id: string;
   project_id: string;
+  vendor_review_id: string;
   status: string;
   ws_url: string;
   status_url: string;
 };
 
+export type BusinessCriticality = "low" | "medium" | "high";
+
+export type VendorDocumentType =
+  | "main_dpa"
+  | "privacy_policy"
+  | "security_toms"
+  | "subprocessors"
+  | "data_transfer_terms"
+  | "ai_terms"
+  | "service_terms"
+  | "security_certification"
+  | "custom_agreement"
+  | "other";
+
+export type DocumentLifecycleStatus = "active" | "archived" | "deleted";
+
+export type ApprovalRecommendation = "approve" | "approve_with_conditions" | "escalate" | "reject";
+
+export type VendorReviewContext = {
+  vendor_name?: string | null;
+  vendor_website?: string | null;
+  tool_or_service_name?: string | null;
+  intended_use_case?: string | null;
+  data_types: string[];
+  shares_personal_data: boolean;
+  shares_customer_data: boolean;
+  shares_employee_data: boolean;
+  shares_sensitive_data: boolean;
+  has_ai_features: boolean;
+  business_criticality?: BusinessCriticality | null;
+  vendor_region?: "eea" | "uk" | "us" | "global" | "unknown" | null;
+  processes_eu_personal_data?: boolean | null;
+  transfers_data_outside_eea?: boolean | null;
+  internal_owner?: string | null;
+  review_deadline?: string | null;
+  context_completed_at?: string | null;
+};
+
+export type VendorReviewCreationContext = {
+  vendor_name: string;
+  intended_use_case: string;
+  shares_personal_data: boolean;
+  business_criticality: BusinessCriticality;
+  vendor_website?: string | null;
+  tool_or_service_name?: string | null;
+  name?: string | null;
+};
+
 export type ProjectSummary = {
+  vendor_review_id: string;
   project_id: string;
   name: string;
   status:
@@ -62,6 +112,15 @@ export type ProjectSummary = {
   created_at: string;
   updated_at: string;
   last_activity_at: string;
+  review_type?: string | null;
+  vendor_name?: string | null;
+  tool_or_service_name?: string | null;
+  intended_use_case?: string | null;
+  business_criticality?: BusinessCriticality | string | null;
+  current_recommendation?: ApprovalRecommendation | string | null;
+  document_count?: number;
+  primary_document_id?: string | null;
+  primary_document_filename?: string | null;
   document_id?: string | null;
   document_filename?: string | null;
 };
@@ -75,6 +134,18 @@ export type ProjectDocumentSummary = {
   filename: string;
   mime_type: string;
   page_count: number;
+  document_type?: VendorDocumentType | string;
+  display_name?: string | null;
+  description?: string | null;
+  is_primary?: boolean;
+  source_kind?: string;
+  source_url?: string | null;
+  lifecycle_status?: DocumentLifecycleStatus | string;
+  active?: boolean;
+  archived_at?: string | null;
+  archive_expires_at?: string | null;
+  deleted_at?: string | null;
+  hard_deleted_at?: string | null;
   parse_status?: string | null;
   parser_route?: string | null;
   pdf_classification?: string | null;
@@ -89,8 +160,11 @@ export type ParsedDocumentTextResponse = {
 
 export type AnalysisRunSummary = {
   analysis_run_id: string;
+  vendor_review_id?: string;
   project_id: string;
   document_id: string;
+  primary_document_id?: string | null;
+  input_document_ids?: string[];
   status: string;
   model_version: string;
   policy_version: string;
@@ -206,6 +280,8 @@ export type ChecklistDraftBootstrapResponse = {
   checklist_draft_id: string;
   document_id: string;
   project_id: string;
+  vendor_review_id?: string;
+  input_document_ids?: string[];
   status: string;
   ws_url: string;
   status_url: string;
@@ -215,6 +291,8 @@ export type ChecklistDraftStatus = {
   checklist_draft_id: string;
   document_id: string;
   project_id: string;
+  vendor_review_id?: string;
+  input_document_ids?: string[];
   status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | string;
   stage: string;
   progress_pct: number;
@@ -231,16 +309,25 @@ export type ReviewSetupResponse = {
   analysis_run_id: string;
   document_id: string;
   project_id: string;
+  vendor_review_id?: string;
   selected_source_ids: string[];
   status: string;
 };
 
 export type ApprovedChecklistSummary = {
   approved_checklist_id: string;
+  vendor_review_id?: string;
   project_id: string;
   document_id: string;
+  input_document_ids?: string[];
   version: string;
   selected_source_ids: string[];
+  review_mode?: string;
+  profile_id?: string;
+  auto_approved?: boolean;
+  stale_at?: string | null;
+  stale_reason?: string | null;
+  stale_document_ids?: string[];
   owner: string;
   approval_status: string;
   approved_by?: string | null;
@@ -344,6 +431,27 @@ export type AnalysisRunReportResponse = {
   findings: AnalysisFindingDetail[];
 };
 
+export type ApprovalPackResponse = {
+  approval_pack_id: string;
+  vendor_review_id: string;
+  project_id: string;
+  analysis_run_id?: string | null;
+  approved_checklist_id?: string | null;
+  version: string;
+  status: string;
+  recommendation: ApprovalRecommendation | string;
+  recommendation_summary: string;
+  confidence: number;
+  review_required: boolean;
+  pack: Record<string, unknown>;
+  stale_at?: string | null;
+  stale_reason?: string | null;
+  stale_document_ids?: string[];
+  created_at: string;
+  updated_at: string;
+  published_at?: string | null;
+};
+
 export type AnalysisFindingDetail = {
   check_id: string;
   title: string;
@@ -355,6 +463,8 @@ export type AnalysisFindingDetail = {
 
 export type ProjectDetail = {
   project: ProjectSummary;
+  vendor_context?: VendorReviewContext;
+  documents?: ProjectDocumentSummary[];
   document?: ProjectDocumentSummary | null;
   parse_job?: UploadJobStatus | null;
   checklist_draft?: ChecklistDraftStatus | null;
@@ -408,11 +518,12 @@ export function getDocumentProxyUrl(documentId: string) {
   return `/api/documents/${encodeURIComponent(documentId)}`;
 }
 
-export function getProjectDocumentViewerUrl(projectId: string, page?: number | null) {
+export function getProjectDocumentViewerUrl(projectId: string, page?: number | null, documentId?: string | null) {
   const params = new URLSearchParams();
   if (page && page > 0) params.set("page", String(page));
+  if (documentId) params.set("documentId", documentId);
   const query = params.toString();
-  return `/projects/${encodeURIComponent(projectId)}/review/document${query ? `?${query}` : ""}`;
+  return `/vendor-reviews/${encodeURIComponent(projectId)}/review/document${query ? `?${query}` : ""}`;
 }
 
 async function parseJson<T>(res: Response): Promise<T> {
@@ -468,13 +579,32 @@ export async function createProject(name?: string | null): Promise<CreateProject
   return parseJson<CreateProjectResponse>(res);
 }
 
+export async function createVendorReview(payload: VendorReviewCreationContext): Promise<CreateProjectResponse> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseJson<CreateProjectResponse>(res);
+}
+
 export async function listProjects(): Promise<ProjectSummary[]> {
   const res = await apiFetch(`${getApiBaseUrl()}/v1/projects`, { cache: "no-store" });
   return parseJson<ProjectSummary[]>(res);
 }
 
+export async function listVendorReviews(): Promise<ProjectSummary[]> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews`, { cache: "no-store" });
+  return parseJson<ProjectSummary[]>(res);
+}
+
 export async function getProject(projectId: string): Promise<ProjectDetail> {
   const res = await apiFetch(`${getApiBaseUrl()}/v1/projects/${projectId}`, { cache: "no-store" });
+  return parseJson<ProjectDetail>(res);
+}
+
+export async function getVendorReview(reviewId: string): Promise<ProjectDetail> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${reviewId}`, { cache: "no-store" });
   return parseJson<ProjectDetail>(res);
 }
 
@@ -492,6 +622,18 @@ export async function renameProject(projectId: string, name: string): Promise<Pr
   return parseJson<ProjectDetail>(res);
 }
 
+export async function updateVendorReview(
+  reviewId: string,
+  payload: { name?: string | null; vendor_context?: Partial<VendorReviewContext> | null },
+): Promise<ProjectDetail> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${reviewId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseJson<ProjectDetail>(res);
+}
+
 export async function deleteProject(projectId: string): Promise<void> {
   const res = await apiFetch(`${getApiBaseUrl()}/v1/projects/${projectId}`, {
     method: "DELETE",
@@ -503,15 +645,98 @@ export async function deleteProject(projectId: string): Promise<void> {
   }
 }
 
-export async function createUpload(file: File, projectId: string): Promise<UploadBootstrapResponse> {
+export type CreateUploadOptions = {
+  document_type?: VendorDocumentType | string;
+  display_name?: string | null;
+  description?: string | null;
+  make_primary?: boolean;
+};
+
+export async function createUpload(file: File, projectId: string, options: CreateUploadOptions = {}): Promise<UploadBootstrapResponse> {
   const form = new FormData();
   form.append("project_id", projectId);
   form.append("file", file);
+  form.append("document_type", options.document_type || "main_dpa");
+  if (options.display_name) form.append("display_name", options.display_name);
+  if (options.description) form.append("description", options.description);
+  if (options.make_primary) form.append("make_primary", "true");
   const res = await apiFetch(`${getApiBaseUrl()}/v1/uploads`, {
     method: "POST",
     body: form,
   });
   return parseJson<UploadBootstrapResponse>(res);
+}
+
+export async function createVendorDocumentUpload(
+  file: File,
+  reviewId: string,
+  options: CreateUploadOptions = {},
+): Promise<UploadBootstrapResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("document_type", options.document_type || "main_dpa");
+  if (options.display_name) form.append("display_name", options.display_name);
+  if (options.description) form.append("description", options.description);
+  if (options.make_primary) form.append("make_primary", "true");
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${reviewId}/documents`, {
+    method: "POST",
+    body: form,
+  });
+  return parseJson<UploadBootstrapResponse>(res);
+}
+
+export async function updateVendorDocument(
+  reviewId: string,
+  documentId: string,
+  payload: { document_type?: VendorDocumentType | string | null; display_name?: string | null; description?: string | null },
+): Promise<ProjectDocumentSummary> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${reviewId}/documents/${documentId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseJson<ProjectDocumentSummary>(res);
+}
+
+export async function markVendorDocumentPrimary(reviewId: string, documentId: string): Promise<ProjectDocumentSummary> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${reviewId}/documents/${documentId}/primary`, {
+    method: "POST",
+  });
+  return parseJson<ProjectDocumentSummary>(res);
+}
+
+export async function archiveVendorDocument(
+  reviewId: string,
+  documentId: string,
+  replacementDocumentId?: string | null,
+): Promise<ProjectDocumentSummary> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${reviewId}/documents/${documentId}/archive`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ replacement_document_id: replacementDocumentId || null }),
+  });
+  return parseJson<ProjectDocumentSummary>(res);
+}
+
+export async function restoreVendorDocument(reviewId: string, documentId: string): Promise<ProjectDocumentSummary> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${reviewId}/documents/${documentId}/restore`, {
+    method: "POST",
+  });
+  return parseJson<ProjectDocumentSummary>(res);
+}
+
+export async function hardDeleteVendorDocument(
+  reviewId: string,
+  documentId: string,
+  replacementDocumentId?: string | null,
+): Promise<ProjectDocumentSummary> {
+  const params = new URLSearchParams();
+  if (replacementDocumentId) params.set("replacement_document_id", replacementDocumentId);
+  const query = params.toString();
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${reviewId}/documents/${documentId}${query ? `?${query}` : ""}`, {
+    method: "DELETE",
+  });
+  return parseJson<ProjectDocumentSummary>(res);
 }
 
 export async function getUploadStatus(jobId: string): Promise<UploadJobStatus> {
@@ -561,6 +786,13 @@ export async function createAnalysisRun(projectId: string): Promise<AnalysisRunB
   return parseJson<AnalysisRunBootstrapResponse>(res);
 }
 
+export async function createVendorReviewRun(reviewId: string): Promise<AnalysisRunBootstrapResponse> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${reviewId}/review-runs`, {
+    method: "POST",
+  });
+  return parseJson<AnalysisRunBootstrapResponse>(res);
+}
+
 export async function getAnalysisRunStatus(runId: string): Promise<AnalysisRunStatus> {
   const res = await apiFetch(`${getApiBaseUrl()}/v1/analysis-runs/${runId}`, { cache: "no-store" });
   return parseJson<AnalysisRunStatus>(res);
@@ -571,11 +803,28 @@ export async function getAnalysisReport(runId: string): Promise<AnalysisRunRepor
   return parseJson<AnalysisRunReportResponse>(res);
 }
 
+export async function getApprovalPack(runId: string): Promise<ApprovalPackResponse> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/review-runs/${runId}/approval-pack`, { cache: "no-store" });
+  return parseJson<ApprovalPackResponse>(res);
+}
+
 export async function createChecklistDraft(payload: ChecklistDraftPayload): Promise<ChecklistDraftBootstrapResponse> {
   const res = await apiFetch(`${getApiBaseUrl()}/v1/checklist-drafts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+  return parseJson<ChecklistDraftBootstrapResponse>(res);
+}
+
+export async function createVendorCriteriaDraft(
+  reviewId: string,
+  userInstruction?: string | null,
+): Promise<ChecklistDraftBootstrapResponse> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${reviewId}/criteria-drafts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_instruction: userInstruction || null }),
   });
   return parseJson<ChecklistDraftBootstrapResponse>(res);
 }

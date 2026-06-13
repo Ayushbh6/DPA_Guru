@@ -49,7 +49,8 @@ function ThemeToggle() {
     </button>
   );
 }
-import { createProject, deleteProject, renameProject, type ProjectSummary } from "@/lib/uploadApi";
+import VendorReviewCreateDialog from "@/components/VendorReviewCreateDialog";
+import { deleteProject, renameProject, type ProjectSummary } from "@/lib/uploadApi";
 import { ProjectProvider, useProject } from "./ProjectProvider";
 
 function projectStatusStyle(status: string): React.CSSProperties {
@@ -115,7 +116,7 @@ function SidebarProjectItem({
       }}
     >
       <Link
-        href={`/projects/${project.project_id}/dashboard`}
+        href={`/vendor-reviews/${project.vendor_review_id || project.project_id}/dashboard`}
         className={`block flex-1 py-3 transition-colors ${collapsed ? "px-0 text-center" : "px-4"}`}
         title={collapsed ? project.name : undefined}
       >
@@ -216,6 +217,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
   const [renameMode, setRenameMode] = useState(false);
   const [renameValue, setRenameValue] = useState(detail?.project?.name || "");
   const [renaming, setRenaming] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
   
   const [inlineRenameProject, setInlineRenameProject] = useState<ProjectSummary | null>(null);
   const [inlineRenameValue, setInlineRenameValue] = useState("");
@@ -259,11 +261,8 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
     }
   }
 
-  async function handleNewProject() {
-    const name = prompt("Enter a name for the new analysis:", "Untitled analysis");
-    if (name === null) return;
-    const project = await createProject(name || "Untitled analysis");
-    router.push(project.workspace_url || `/projects/${project.project_id}/dashboard`);
+  function handleNewProject() {
+    setCreateDialogOpen(true);
   }
 
   async function handleRename() {
@@ -316,7 +315,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
           style={{ border: '1px solid var(--line)' }}
         >
           <LoaderCircle className="h-5 w-5 animate-spin" style={{ color: 'var(--text-2)' }} />
-          <span style={{ color: 'var(--text-2)' }}>Loading project workspace...</span>
+            <span style={{ color: 'var(--text-2)' }}>Loading Checker workspace...</span>
         </div>
       </main>
     );
@@ -330,13 +329,13 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
           style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}
         >
           <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'var(--text-3)' }}>
-            Project Access
+            Review Access
           </div>
           <h1 className="mt-4 text-3xl font-semibold tracking-tight" style={{ color: 'var(--text)' }}>
-            Project not available
+            Vendor Review not available
           </h1>
           <p className="mt-4 max-w-xl text-sm leading-6" style={{ color: 'var(--text-2)' }}>
-            {workspaceError || "This project could not be loaded. It may not exist anymore or you may not have access to it."}
+            {workspaceError || "This Vendor Review could not be loaded. It may not exist anymore or you may not have access to it."}
           </p>
           <div className="mt-6">
             <Link
@@ -354,10 +353,10 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
   }
 
   const tabs = [
-    { name: "Dashboard", shortName: "Dashboard", href: `/projects/${projectId}/dashboard` },
-    { name: "Setup Checklist", shortName: "Checklist", href: `/projects/${projectId}/checklist` },
-    { name: "Checklist Result", shortName: "Result", href: `/projects/${projectId}/checklist/result` },
-    { name: "Final Review", shortName: "Review", href: `/projects/${projectId}/review` },
+    { name: "Workspace", shortName: "Workspace", href: `/vendor-reviews/${projectId}/dashboard` },
+    { name: "Criteria", shortName: "Criteria", href: `/vendor-reviews/${projectId}/checklist` },
+    { name: "Approved Criteria", shortName: "Approved", href: `/vendor-reviews/${projectId}/checklist/result` },
+    { name: "Approval Pack", shortName: "Pack", href: `/vendor-reviews/${projectId}/review` },
   ];
 
   return (
@@ -393,7 +392,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
               <ShieldCheck className="h-4 w-4" />
             </div>
             <div className="truncate">
-              <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>Merlin AI</div>
+              <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>Checker</div>
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -414,18 +413,18 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
         <div className={`flex-1 overflow-y-auto px-3 py-5 pb-8 ${sidebarOpen ? "" : "px-2"}`}>
           <button
             type="button"
-            onClick={() => void handleNewProject()}
-            title={sidebarOpen ? undefined : "New Analysis"}
+            onClick={handleNewProject}
+            title={sidebarOpen ? undefined : "New Vendor Review"}
             className="flex w-full items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium transition-opacity hover:opacity-80"
             style={{ background: 'var(--invert)', color: 'var(--invert-fg)', border: '1px solid var(--line)' }}
           >
             <FolderPlus className="h-4 w-4 shrink-0" />
-            {sidebarOpen && <span>New Analysis</span>}
+            {sidebarOpen && <span>New Review</span>}
           </button>
 
           {sidebarOpen && (
             <div className="mt-8 mb-4 flex items-center justify-between px-1">
-              <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'var(--text-3)' }}>Projects</div>
+              <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'var(--text-3)' }}>Reviews</div>
               <Link href="/" className="text-xs transition-colors" style={{ color: 'var(--text-3)' }}
                 onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
                 onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
@@ -609,6 +608,15 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
           <div className="mt-2 md:mt-3 md:min-h-0 md:flex-1 md:overflow-y-auto md:pr-1 lg:mt-4">{children}</div>
         </div>
       </section>
+      <VendorReviewCreateDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        onCreated={(project) => {
+          setCreateDialogOpen(false);
+          void refreshSidebar();
+          router.push(project.workspace_url || `/vendor-reviews/${project.vendor_review_id || project.project_id}/dashboard`);
+        }}
+      />
     </main>
   );
 }

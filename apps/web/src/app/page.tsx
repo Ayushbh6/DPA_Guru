@@ -27,7 +27,7 @@ export default function Home() {
         className="w-full py-8 flex items-center justify-center text-[10px] tracking-[0.25em] uppercase font-light"
         style={{ borderTop: '1px solid var(--line)', color: 'var(--text-3)' }}
       >
-        © 2026 Merlin AI
+        © 2026 Checker
       </footer>
     </main>
   );

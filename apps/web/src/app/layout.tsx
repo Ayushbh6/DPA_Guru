@@ -10,8 +10,8 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
-  title: "Merlin AI | Smart DPA Analyzer",
-  description: "Upload your Data Processing Agreement and get a complete risk analysis.",
+  title: "Checker | Vendor Review Workspace",
+  description: "Review vendor DPAs and supporting documents with criteria confirmation and Approval Packs.",
 };
 
 export default function RootLayout({

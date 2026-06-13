@@ -21,6 +21,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from db.models import (
     AnalysisReport,
     AnalysisRun,
+    AnalysisRunDocument,
+    ApprovalPack,
     AuditEvent,
     ApprovedChecklist,
     ChecklistDraftJob,
@@ -54,6 +56,7 @@ from .schemas import (
     AnalysisRunReportResponse,
     AnalysisRunSnapshot,
     AnalysisRunSummary,
+    ApprovalPackResponse,
     ApproveChecklistRequest,
     ApprovedChecklistResponse,
     ApprovedChecklistSummary,
@@ -61,14 +64,18 @@ from .schemas import (
     ChecklistDraftSnapshot,
     CreateAnalysisRunRequest,
     CreateProjectResponse,
+    CreateVendorReviewRequest,
     ProjectDetail,
     ProjectDocumentSummary,
     ProjectSummary,
     ReferenceSource,
     ReviewSetupRequest,
     ReviewSetupResponse,
+    UpdateDocumentRequest,
+    UpdateVendorReviewRequest,
     UploadBootstrapResponse,
     UploadJobSnapshot,
+    VendorReviewContext,
 )
 from .storage import ArtifactStore, StoredArtifact
 from dpa_schemas import CheckAssessmentOutput, CheckResult, OutputV2Report, ReviewState, ReviewSynthesisOutput, RiskLevel
@@ -118,6 +125,20 @@ ANALYSIS_STAGE_PROGRESS = {
 }
 
 ALLOWED_EXTENSIONS = {".pdf": "pdf", ".docx": "docx"}
+DEFAULT_REVIEW_MODE = "vendor_dpa_review"
+DEFAULT_PROFILE_ID = "standard_vendor_dpa_v1"
+VENDOR_DOCUMENT_TYPES = {
+    "main_dpa",
+    "privacy_policy",
+    "security_toms",
+    "subprocessors",
+    "data_transfer_terms",
+    "ai_terms",
+    "service_terms",
+    "security_certification",
+    "custom_agreement",
+    "other",
+}
 DEFAULT_DEV_TENANT_NAME = "Local Dev Tenant"
 UNTITLED_PROJECT_NAME = "Untitled analysis"
 
@@ -194,6 +215,27 @@ class UploadPipelineService:
         actor_username: str,
         trace_id: str | None = None,
     ) -> CreateProjectResponse:
+        return self.create_vendor_review(
+            CreateVendorReviewRequest(
+                name=name,
+                vendor_name=(name or "Untitled vendor review").strip() or "Untitled vendor review",
+                intended_use_case="Not provided yet.",
+                shares_personal_data=False,
+                business_criticality="medium",
+            ),
+            actor_username=actor_username,
+            trace_id=trace_id,
+            allow_incomplete_compat=True,
+        )
+
+    def create_vendor_review(
+        self,
+        payload: CreateVendorReviewRequest,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+        allow_incomplete_compat: bool = False,
+    ) -> CreateProjectResponse:
         with self.session_factory() as session:
             tenant = self._ensure_dev_tenant(session)
             self._enforce_project_alpha_quota(
@@ -203,11 +245,24 @@ class UploadPipelineService:
                 trace_id=self._normalize_trace_id(trace_id),
             )
             now = utcnow()
+            clean_vendor_name = payload.vendor_name.strip()
+            clean_use_case = payload.intended_use_case.strip()
+            if not allow_incomplete_compat and (not clean_vendor_name or not clean_use_case):
+                raise HTTPException(status_code=400, detail="Vendor name and intended use case are required.")
+            review_name = (payload.name or "").strip() or clean_vendor_name or UNTITLED_PROJECT_NAME
             project = Project(
                 tenant_id=tenant.id,
                 owner_username=actor_username,
-                name=(name or "").strip() or UNTITLED_PROJECT_NAME,
+                name=review_name,
                 status="EMPTY",
+                review_type=DEFAULT_REVIEW_MODE,
+                vendor_name=clean_vendor_name,
+                vendor_website=payload.vendor_website,
+                tool_or_service_name=payload.tool_or_service_name,
+                intended_use_case=clean_use_case,
+                shares_personal_data=payload.shares_personal_data,
+                business_criticality=payload.business_criticality,
+                context_completed_at=None,
                 created_at=now,
                 updated_at=now,
                 last_activity_at=now,
@@ -224,14 +279,21 @@ class UploadPipelineService:
                 trace_id=self._normalize_trace_id(trace_id),
                 actor_type=actor_type,
                 actor_id=actor_id,
-                metadata_json={"project_id": str(project.id)},
+                metadata_json={
+                    "project_id": str(project.id),
+                    "vendor_review_id": str(project.id),
+                    "vendor_name": project.vendor_name,
+                },
             )
             session.commit()
             session.refresh(project)
             summary = self._build_project_summary(session, project)
-            return CreateProjectResponse(**summary.model_dump(mode="python"), workspace_url=f"/projects/{project.id}")
+            return CreateProjectResponse(**summary.model_dump(mode="python"), workspace_url=f"/vendor-reviews/{project.id}")
 
     def list_projects(self, *, actor_username: str) -> list[ProjectSummary]:
+        return self.list_vendor_reviews(actor_username=actor_username)
+
+    def list_vendor_reviews(self, *, actor_username: str) -> list[ProjectSummary]:
         with self.session_factory() as session:
             tenant = self._ensure_dev_tenant(session)
             projects = session.execute(
@@ -246,11 +308,14 @@ class UploadPipelineService:
             return summaries
 
     def get_project_detail(self, project_id: uuid.UUID, *, actor_username: str) -> ProjectDetail | None:
+        return self.get_vendor_review_detail(project_id, actor_username=actor_username)
+
+    def get_vendor_review_detail(self, review_id: uuid.UUID, *, actor_username: str) -> ProjectDetail | None:
         with self.session_factory() as session:
             try:
                 project = self._require_owned_project(
                     session,
-                    project_id=project_id,
+                    project_id=review_id,
                     actor_username=actor_username,
                 )
             except HTTPException:
@@ -258,6 +323,48 @@ class UploadPipelineService:
             detail = self._build_project_detail(session, project)
             session.commit()
             return detail
+
+    def update_vendor_review(
+        self,
+        review_id: uuid.UUID,
+        payload: UpdateVendorReviewRequest,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> ProjectDetail | None:
+        with self.session_factory() as session:
+            try:
+                project = self._require_owned_project(
+                    session,
+                    project_id=review_id,
+                    actor_username=actor_username,
+                )
+            except HTTPException:
+                return None
+            if payload.name is not None:
+                clean_name = payload.name.strip()
+                if not clean_name:
+                    raise HTTPException(status_code=400, detail="Vendor review name is required.")
+                project.name = clean_name
+            if payload.vendor_context is not None:
+                self._apply_vendor_context(project, payload.vendor_context)
+            project.updated_at = utcnow()
+            project.last_activity_at = utcnow()
+            actor_type, actor_id = self._actor_fields(actor_username)
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name="vendor_review_updated",
+                resource_type="project",
+                resource_id=str(project.id),
+                trace_id=self._normalize_trace_id(trace_id),
+                actor_type=actor_type,
+                actor_id=actor_id,
+                metadata_json={"project_id": str(project.id), "vendor_review_id": str(project.id)},
+            )
+            session.commit()
+            session.refresh(project)
+            return self._build_project_detail(session, project)
 
     def rename_project(
         self,
@@ -332,9 +439,14 @@ class UploadPipelineService:
         mime_type: str | None,
         data: bytes,
         actor_username: str,
+        document_type: str = "main_dpa",
+        display_name: str | None = None,
+        description: str | None = None,
+        make_primary: bool = False,
         trace_id: str | None = None,
     ) -> UploadBootstrapResponse:
         trace_id = self._normalize_trace_id(trace_id)
+        document_type = self._normalize_document_type(document_type)
         ext = Path(filename).suffix.lower()
         if ext not in ALLOWED_EXTENSIONS:
             raise HTTPException(status_code=400, detail="Unsupported file type. Only PDF and DOCX are allowed.")
@@ -386,6 +498,10 @@ class UploadPipelineService:
             file_type,
             upload_artifact,
             actor_username,
+            document_type,
+            display_name,
+            description,
+            make_primary,
             trace_id,
         )
 
@@ -393,6 +509,7 @@ class UploadPipelineService:
             job_id=created.job_id,
             document_id=created.document_id,
             project_id=created.project_id,
+            vendor_review_id=created.project_id,
             status="QUEUED",
             ws_url=f"/v1/uploads/{created.job_id}/events",
             status_url=f"/v1/uploads/{created.job_id}",
@@ -411,11 +528,6 @@ class UploadPipelineService:
                 project_id=project_id,
                 actor_username=actor_username,
             )
-            existing_document = session.execute(
-                select(Document.id).where(Document.project_id == project.id)
-            ).scalar_one_or_none()
-            if existing_document is not None:
-                raise HTTPException(status_code=409, detail="This project already has a document.")
             current_user_documents = self._count_documents_for_user_alpha_quota(session, actor_username=actor_username)
             if current_user_documents >= self.settings.alpha_max_documents_per_user:
                 actor_type, actor_id = self._actor_fields(actor_username)
@@ -562,6 +674,10 @@ class UploadPipelineService:
         file_type: str,
         upload_artifact: StoredArtifact,
         actor_username: str,
+        document_type: str,
+        display_name: str | None,
+        description: str | None,
+        make_primary: bool,
         trace_id: str,
     ) -> UploadCreateResult:
         source_artifact_type = "SOURCE_PDF" if file_type == "pdf" else "SOURCE_DOCX"
@@ -571,11 +687,10 @@ class UploadPipelineService:
                 project_id=context.project_id,
                 actor_username=actor_username,
             )
-            existing_document = session.execute(
-                select(Document.id).where(Document.project_id == project.id)
-            ).scalar_one_or_none()
-            if existing_document is not None:
-                raise HTTPException(status_code=409, detail="This project already has a document.")
+            active_primary = self._primary_document_for_project(session, project.id)
+            should_be_primary = document_type == "main_dpa" and (active_primary is None or make_primary)
+            if should_be_primary and active_primary is not None:
+                active_primary.is_primary = False
             document = Document(
                 id=context.document_id,
                 tenant_id=project.tenant_id,
@@ -584,9 +699,13 @@ class UploadPipelineService:
                 mime_type=mime_type,
                 page_count=0,
                 storage_uri=upload_artifact.object_uri,
-                document_type="main_dpa",
-                is_primary=True,
+                document_type=document_type,
+                display_name=display_name.strip() if display_name and display_name.strip() else None,
+                description=description.strip() if description and description.strip() else None,
+                is_primary=should_be_primary,
                 uploaded_by=actor_username,
+                lifecycle_status="active",
+                active=True,
                 parse_status="QUEUED",
             )
             session.add(document)
@@ -629,9 +748,12 @@ class UploadPipelineService:
                 actor_id=actor_username,
                 metadata_json={
                     "project_id": str(project.id),
+                    "vendor_review_id": str(project.id),
                     "document_id": str(document.id),
                     "job_id": str(job.id),
                     "filename": filename,
+                    "document_type": document.document_type,
+                    "is_primary": document.is_primary,
                 },
             )
             self._record_audit_event(
@@ -682,6 +804,110 @@ class UploadPipelineService:
             return "USER", username
         return "SYSTEM", "upload-pipeline"
 
+    def _normalize_document_type(self, document_type: str | None) -> str:
+        clean = (document_type or "main_dpa").strip().lower()
+        if clean not in VENDOR_DOCUMENT_TYPES:
+            raise HTTPException(status_code=400, detail=f"Unsupported document_type: {document_type}.")
+        return clean
+
+    def _apply_vendor_context(self, project: Project, context: VendorReviewContext) -> None:
+        project.vendor_name = context.vendor_name
+        project.vendor_website = context.vendor_website
+        project.tool_or_service_name = context.tool_or_service_name
+        project.intended_use_case = context.intended_use_case
+        project.data_types = list(context.data_types or [])
+        project.shares_personal_data = bool(context.shares_personal_data)
+        project.shares_customer_data = bool(context.shares_customer_data)
+        project.shares_employee_data = bool(context.shares_employee_data)
+        project.shares_sensitive_data = bool(context.shares_sensitive_data)
+        project.has_ai_features = bool(context.has_ai_features)
+        project.business_criticality = context.business_criticality
+        project.vendor_region = context.vendor_region
+        project.processes_eu_personal_data = context.processes_eu_personal_data
+        project.transfers_data_outside_eea = context.transfers_data_outside_eea
+        project.internal_owner = context.internal_owner
+        project.review_deadline = context.review_deadline
+        project.context_completed_at = utcnow() if self._vendor_context_complete(context) else None
+
+    def _vendor_context_snapshot(self, project: Project) -> dict[str, Any]:
+        return {
+            "vendor_name": project.vendor_name,
+            "vendor_website": project.vendor_website,
+            "tool_or_service_name": project.tool_or_service_name,
+            "intended_use_case": project.intended_use_case,
+            "data_types": list(project.data_types or []),
+            "shares_personal_data": project.shares_personal_data,
+            "shares_customer_data": project.shares_customer_data,
+            "shares_employee_data": project.shares_employee_data,
+            "shares_sensitive_data": project.shares_sensitive_data,
+            "has_ai_features": project.has_ai_features,
+            "business_criticality": project.business_criticality,
+            "vendor_region": project.vendor_region,
+            "processes_eu_personal_data": project.processes_eu_personal_data,
+            "transfers_data_outside_eea": project.transfers_data_outside_eea,
+            "internal_owner": project.internal_owner,
+            "review_deadline": project.review_deadline.isoformat() if project.review_deadline else None,
+        }
+
+    def _vendor_context_response(self, project: Project) -> VendorReviewContext:
+        return VendorReviewContext(
+            vendor_name=project.vendor_name,
+            vendor_website=project.vendor_website,
+            tool_or_service_name=project.tool_or_service_name,
+            intended_use_case=project.intended_use_case,
+            data_types=list(project.data_types or []),
+            shares_personal_data=project.shares_personal_data,
+            shares_customer_data=project.shares_customer_data,
+            shares_employee_data=project.shares_employee_data,
+            shares_sensitive_data=project.shares_sensitive_data,
+            has_ai_features=project.has_ai_features,
+            business_criticality=project.business_criticality,
+            vendor_region=project.vendor_region,
+            processes_eu_personal_data=project.processes_eu_personal_data,
+            transfers_data_outside_eea=project.transfers_data_outside_eea,
+            internal_owner=project.internal_owner,
+            review_deadline=project.review_deadline,
+            context_completed_at=project.context_completed_at,
+        )
+
+    def _vendor_context_complete(self, context: VendorReviewContext) -> bool:
+        return bool(
+            context.vendor_name
+            and context.intended_use_case
+            and context.business_criticality
+            and context.data_types
+            and context.vendor_region
+            and context.processes_eu_personal_data is not None
+            and context.transfers_data_outside_eea is not None
+        )
+
+    def _require_full_vendor_context(self, project: Project) -> None:
+        context = self._vendor_context_response(project)
+        if not self._vendor_context_complete(context):
+            raise HTTPException(status_code=409, detail="Complete vendor context is required before final review.")
+
+    def _review_input_documents(self, session: Session, project: Project, *, require_primary: bool) -> tuple[Document | None, list[Document]]:
+        active_documents = self._active_documents_for_project(session, project.id)
+        primary = self._primary_document_for_project(session, project.id)
+        if require_primary and primary is None:
+            raise HTTPException(status_code=409, detail="Upload and mark one Main DPA as primary before continuing.")
+        if not active_documents:
+            raise HTTPException(status_code=409, detail="Upload at least one active document before continuing.")
+        pending = [
+            doc.filename
+            for doc in active_documents
+            if doc.parse_status not in {"COMPLETED", "FAILED", "DELETED"}
+        ]
+        if pending:
+            raise HTTPException(status_code=409, detail=f"Document parsing must finish before continuing: {', '.join(pending)}")
+        failed = [doc.filename for doc in active_documents if doc.parse_status == "FAILED"]
+        if failed:
+            raise HTTPException(status_code=409, detail=f"Archive or replace failed documents before continuing: {', '.join(failed)}")
+        unparsed = [doc.filename for doc in active_documents if doc.parse_status != "COMPLETED" or not doc.extracted_text_uri]
+        if unparsed:
+            raise HTTPException(status_code=409, detail=f"All active documents must be parsed before continuing: {', '.join(unparsed)}")
+        return primary, active_documents
+
     def _require_owned_project(
         self,
         session: Session,
@@ -720,7 +946,180 @@ class UploadPipelineService:
         project, document = row
         if not include_deleted and project.status == "DELETED":
             raise HTTPException(status_code=404, detail="Document not found.")
+        if not include_deleted and document.lifecycle_status == "deleted":
+            raise HTTPException(status_code=404, detail="Document not found.")
         return project, document
+
+    def _require_review_document(
+        self,
+        session: Session,
+        *,
+        review_id: uuid.UUID,
+        document_id: uuid.UUID,
+        actor_username: str,
+        include_archived: bool = False,
+    ) -> tuple[Project, Document]:
+        project = self._require_owned_project(session, project_id=review_id, actor_username=actor_username)
+        document = session.get(Document, document_id)
+        if document is None or document.project_id != project.id or document.lifecycle_status == "deleted":
+            raise HTTPException(status_code=404, detail="Document not found.")
+        if not include_archived and document.lifecycle_status != "active":
+            raise HTTPException(status_code=409, detail="Document is not active.")
+        return project, document
+
+    def _resolve_primary_replacement(
+        self,
+        session: Session,
+        *,
+        project_id: uuid.UUID,
+        document_id: uuid.UUID,
+        replacement_document_id: uuid.UUID | None,
+    ) -> Document | None:
+        if replacement_document_id is None:
+            return None
+        if replacement_document_id == document_id:
+            raise HTTPException(status_code=400, detail="Replacement document must be different from the current primary DPA.")
+        replacement = session.get(Document, replacement_document_id)
+        if (
+            replacement is None
+            or replacement.project_id != project_id
+            or replacement.document_type != "main_dpa"
+            or replacement.lifecycle_status != "active"
+            or not replacement.active
+            or replacement.hard_deleted_at is not None
+        ):
+            raise HTTPException(status_code=400, detail="Replacement must be an active Main DPA in this Vendor Review.")
+        current_primary = self._primary_document_for_project(session, project_id)
+        if current_primary is not None and current_primary.id != replacement.id:
+            current_primary.is_primary = False
+        return replacement
+
+    def _hard_delete_document_sync(
+        self,
+        session: Session,
+        *,
+        project: Project,
+        document: Document,
+        actor_username: str,
+        trace_id: str,
+        reason: str,
+    ) -> ProjectDocumentSummary:
+        now = utcnow()
+        artifact_rows = list(
+            session.execute(select(DocumentArtifact).where(DocumentArtifact.document_id == document.id)).scalars().all()
+        )
+        uris_to_delete = {artifact.object_uri for artifact in artifact_rows if artifact.object_uri}
+        if document.storage_uri:
+            uris_to_delete.add(document.storage_uri)
+        if document.extracted_text_uri:
+            uris_to_delete.add(document.extracted_text_uri)
+
+        for uri in uris_to_delete:
+            try:
+                self.storage.delete_uri(uri)
+            except Exception as exc:
+                log_event(
+                    logging.ERROR,
+                    severity="error",
+                    event="document_hard_delete_artifact_failed",
+                    project_id=str(project.id),
+                    document_id=str(document.id),
+                    object_uri=uri,
+                    error_code=exc.__class__.__name__,
+                    error_message=str(exc),
+                    actor_username=actor_username,
+                )
+
+        for artifact in artifact_rows:
+            artifact.active = False
+            metadata = dict(artifact.metadata_json or {})
+            metadata["hard_deleted_at"] = now.isoformat()
+            artifact.metadata_json = metadata
+
+        session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))
+        document.is_primary = False
+        document.active = False
+        document.lifecycle_status = "deleted"
+        document.deleted_at = now
+        document.hard_deleted_at = now
+        document.archive_expires_at = None
+        document.extracted_text_uri = None
+        document.extracted_text_format = None
+        document.parse_completed_at = None
+        document.parse_status = "DELETED"
+        document.page_count = 0
+        document.token_count_estimate = None
+        document.storage_uri = f"deleted://{document.id}"
+        self._mark_outputs_stale_for_document(session, project_id=project.id, document_id=document.id, stale_at=now, reason=reason)
+        project.updated_at = now
+        project.last_activity_at = now
+        self._record_audit_event(
+            session,
+            tenant_id=project.tenant_id,
+            event_name="document_hard_deleted",
+            resource_type="document",
+            resource_id=str(document.id),
+            trace_id=trace_id,
+            actor_type="USER",
+            actor_id=actor_username,
+            metadata_json={
+                "project_id": str(project.id),
+                "vendor_review_id": str(project.id),
+                "document_id": str(document.id),
+                "deleted_uri_count": len(uris_to_delete),
+                "reason": reason,
+            },
+        )
+        self._sync_project_state(session, project.id)
+        return self._build_document_summary(document)
+
+    def _mark_outputs_stale_for_document(
+        self,
+        session: Session,
+        *,
+        project_id: uuid.UUID,
+        document_id: uuid.UUID,
+        stale_at: datetime,
+        reason: str,
+    ) -> None:
+        doc_id = str(document_id)
+
+        def mark(row) -> None:
+            existing = [str(item) for item in (getattr(row, "stale_document_ids", None) or [])]
+            if doc_id not in existing:
+                existing.append(doc_id)
+            row.stale_at = row.stale_at or stale_at
+            row.stale_reason = row.stale_reason or reason
+            row.stale_document_ids = existing
+
+        checklist_jobs = session.execute(
+            select(ChecklistDraftJob).where(ChecklistDraftJob.project_id == project_id)
+        ).scalars().all()
+        for row in checklist_jobs:
+            if row.document_id == document_id or doc_id in [str(item) for item in (row.input_document_ids or [])]:
+                mark(row)
+
+        approved_rows = session.execute(
+            select(ApprovedChecklist).where(ApprovedChecklist.project_id == project_id)
+        ).scalars().all()
+        for row in approved_rows:
+            if row.document_id == document_id or doc_id in [str(item) for item in (row.input_document_ids or [])]:
+                mark(row)
+
+        runs = session.execute(select(AnalysisRun).where(AnalysisRun.project_id == project_id)).scalars().all()
+        stale_run_ids: set[uuid.UUID] = set()
+        for row in runs:
+            if row.document_id == document_id or row.primary_document_id == document_id or doc_id in [str(item) for item in (row.input_document_ids or [])]:
+                mark(row)
+                stale_run_ids.add(row.id)
+
+        if stale_run_ids:
+            reports = session.execute(select(AnalysisReport).where(AnalysisReport.run_id.in_(stale_run_ids))).scalars().all()
+            for row in reports:
+                mark(row)
+            packs = session.execute(select(ApprovalPack).where(ApprovalPack.analysis_run_id.in_(stale_run_ids))).scalars().all()
+            for row in packs:
+                mark(row)
 
     def _require_owned_upload_job(
         self,
@@ -992,7 +1391,41 @@ class UploadPipelineService:
 
     def _latest_document_for_project(self, session: Session, project_id: uuid.UUID) -> Document | None:
         return session.execute(
-            select(Document).where(Document.project_id == project_id).order_by(Document.uploaded_at.desc())
+            select(Document)
+            .where(Document.project_id == project_id)
+            .where(Document.lifecycle_status != "deleted")
+            .order_by(Document.is_primary.desc(), Document.active.desc(), Document.uploaded_at.desc())
+        ).scalars().first()
+
+    def _active_documents_for_project(self, session: Session, project_id: uuid.UUID) -> list[Document]:
+        return list(
+            session.execute(
+                select(Document)
+                .where(Document.project_id == project_id)
+                .where(Document.lifecycle_status == "active")
+                .where(Document.active.is_(True))
+                .where(Document.hard_deleted_at.is_(None))
+                .order_by(Document.is_primary.desc(), Document.sort_order.asc(), Document.uploaded_at.asc())
+            ).scalars().all()
+        )
+
+    def _primary_document_for_project(self, session: Session, project_id: uuid.UUID) -> Document | None:
+        return session.execute(
+            select(Document)
+            .where(Document.project_id == project_id)
+            .where(Document.document_type == "main_dpa")
+            .where(Document.is_primary.is_(True))
+            .where(Document.lifecycle_status == "active")
+            .where(Document.active.is_(True))
+            .where(Document.hard_deleted_at.is_(None))
+            .order_by(Document.uploaded_at.desc())
+        ).scalars().first()
+
+    def _latest_parse_job_for_document(self, session: Session, document_id: uuid.UUID) -> DocumentParseJob | None:
+        return session.execute(
+            select(DocumentParseJob)
+            .where(DocumentParseJob.document_id == document_id)
+            .order_by(DocumentParseJob.created_at.desc())
         ).scalars().first()
 
     def _latest_parse_job_for_project(self, session: Session, project_id: uuid.UUID) -> DocumentParseJob | None:
@@ -1049,7 +1482,7 @@ class UploadPipelineService:
                 return "UPLOADING"
         if document is not None and document.parse_status == "COMPLETED":
             return "READY_FOR_CHECKLIST"
-        if document is not None:
+        if document is not None and document.lifecycle_status == "active":
             return "UPLOADING"
         return "EMPTY"
 
@@ -1058,7 +1491,7 @@ class UploadPipelineService:
         if project is None or project.status == "DELETED":
             return project
 
-        document = self._latest_document_for_project(session, project_id)
+        document = self._primary_document_for_project(session, project_id) or self._latest_document_for_project(session, project_id)
         parse_job = self._latest_parse_job_for_project(session, project_id)
         checklist_job = self._latest_checklist_job_for_project(session, project_id)
         analysis_run = self._latest_analysis_run_for_project(session, project_id)
@@ -1128,6 +1561,8 @@ class UploadPipelineService:
             checklist_draft_id=job.id,
             document_id=doc.id,
             project_id=job.project_id,
+            vendor_review_id=job.project_id,
+            input_document_ids=[uuid.UUID(str(item)) for item in (getattr(job, "input_document_ids", None) or [])],
             status=job.status,
             stage=job.stage,
             progress_pct=job.progress_pct,
@@ -1143,10 +1578,18 @@ class UploadPipelineService:
     def _build_approved_checklist_summary(self, checklist: ApprovedChecklist) -> ApprovedChecklistSummary:
         return ApprovedChecklistSummary(
             approved_checklist_id=checklist.id,
+            vendor_review_id=checklist.project_id,
             project_id=checklist.project_id,
             document_id=checklist.document_id,
+            input_document_ids=[uuid.UUID(str(item)) for item in (checklist.input_document_ids or [])],
             version=checklist.version,
             selected_source_ids=list(checklist.selected_source_ids or []),
+            review_mode=checklist.review_mode,
+            profile_id=checklist.profile_id,
+            auto_approved=checklist.auto_approved,
+            stale_at=checklist.stale_at,
+            stale_reason=checklist.stale_reason,
+            stale_document_ids=[uuid.UUID(str(item)) for item in (checklist.stale_document_ids or [])],
             owner=checklist.owner,
             approval_status=checklist.approval_status,
             approved_by=checklist.approved_by,
@@ -1158,8 +1601,11 @@ class UploadPipelineService:
     def _build_analysis_run_summary(self, session: Session, run: AnalysisRun) -> AnalysisRunSummary:
         return AnalysisRunSummary(
             analysis_run_id=run.id,
+            vendor_review_id=run.project_id,
             project_id=run.project_id,
             document_id=run.document_id,
+            primary_document_id=run.primary_document_id,
+            input_document_ids=[uuid.UUID(str(item)) for item in (run.input_document_ids or [])],
             status=run.status,
             model_version=run.model_version,
             policy_version=run.policy_version,
@@ -1175,13 +1621,51 @@ class UploadPipelineService:
             cost_usd=run.cost_usd,
         )
 
+    def _build_document_summary(self, document: Document) -> ProjectDocumentSummary:
+        return ProjectDocumentSummary(
+            document_id=document.id,
+            filename=document.filename,
+            mime_type=document.mime_type,
+            page_count=document.page_count,
+            document_type=document.document_type,
+            display_name=document.display_name,
+            description=document.description,
+            is_primary=document.is_primary,
+            source_kind=document.source_kind,
+            source_url=document.source_url,
+            lifecycle_status=document.lifecycle_status,
+            active=document.active,
+            archived_at=document.archived_at,
+            archive_expires_at=document.archive_expires_at,
+            deleted_at=document.deleted_at,
+            hard_deleted_at=document.hard_deleted_at,
+            parse_status=document.parse_status,
+            parser_route=document.parser_route,
+            pdf_classification=document.pdf_classification,
+            token_count_estimate=document.token_count_estimate,
+            extracted_text_format=document.extracted_text_format,
+            uploaded_at=document.uploaded_at,
+        )
+
     def _build_project_summary(self, session: Session, project: Project) -> ProjectSummary:
         self._sync_project_state(session, project.id)
-        document = self._latest_document_for_project(session, project.id)
+        active_documents = self._active_documents_for_project(session, project.id)
+        primary_document = self._primary_document_for_project(session, project.id)
+        document = primary_document or (active_documents[0] if active_documents else self._latest_document_for_project(session, project.id))
         return ProjectSummary(
+            vendor_review_id=project.id,
             project_id=project.id,
             name=project.name,
             status=project.status,
+            review_type=project.review_type,
+            vendor_name=project.vendor_name,
+            tool_or_service_name=project.tool_or_service_name,
+            intended_use_case=project.intended_use_case,
+            business_criticality=project.business_criticality,
+            current_recommendation=project.current_recommendation,
+            document_count=len(active_documents),
+            primary_document_id=primary_document.id if primary_document is not None else None,
+            primary_document_filename=primary_document.filename if primary_document is not None else None,
             created_at=project.created_at,
             updated_at=project.updated_at,
             last_activity_at=project.last_activity_at,
@@ -1191,26 +1675,22 @@ class UploadPipelineService:
 
     def _build_project_detail(self, session: Session, project: Project) -> ProjectDetail:
         self._sync_project_state(session, project.id)
-        document = self._latest_document_for_project(session, project.id)
-        parse_job = self._latest_parse_job_for_project(session, project.id)
+        documents = list(
+            session.execute(
+                select(Document)
+                .where(Document.project_id == project.id)
+                .where(Document.lifecycle_status != "deleted")
+                .order_by(Document.lifecycle_status.asc(), Document.is_primary.desc(), Document.sort_order.asc(), Document.uploaded_at.asc())
+            ).scalars().all()
+        )
+        document = self._primary_document_for_project(session, project.id) or (documents[0] if documents else None)
+        parse_job = self._latest_parse_job_for_document(session, document.id) if document is not None else None
         checklist_job = self._latest_checklist_job_for_project(session, project.id)
         approved_checklist = self._latest_approved_checklist_for_project(session, project.id)
         analysis_run = self._latest_analysis_run_for_project(session, project.id)
 
-        doc_summary = None
-        if document is not None:
-            doc_summary = ProjectDocumentSummary(
-                document_id=document.id,
-                filename=document.filename,
-                mime_type=document.mime_type,
-                page_count=document.page_count,
-                parse_status=document.parse_status,
-                parser_route=document.parser_route,
-                pdf_classification=document.pdf_classification,
-                token_count_estimate=document.token_count_estimate,
-                extracted_text_format=document.extracted_text_format,
-                uploaded_at=document.uploaded_at,
-            )
+        doc_summary = self._build_document_summary(document) if document is not None else None
+        document_summaries = [self._build_document_summary(item) for item in documents]
 
         parse_snapshot = self._build_upload_snapshot(parse_job, document) if parse_job and document else None
         checklist_snapshot = self._build_checklist_snapshot(checklist_job, document) if checklist_job and document else None
@@ -1221,6 +1701,8 @@ class UploadPipelineService:
 
         return ProjectDetail(
             project=self._build_project_summary(session, project),
+            vendor_context=self._vendor_context_response(project),
+            documents=document_summaries,
             document=doc_summary,
             parse_job=parse_snapshot,
             checklist_draft=checklist_snapshot,
@@ -1288,6 +1770,263 @@ class UploadPipelineService:
             )
             session.commit()
             return DocumentParsedTextResult(text=self.storage.read_text(document.extracted_text_uri))
+
+    def list_review_documents(self, review_id: uuid.UUID, *, actor_username: str) -> list[ProjectDocumentSummary]:
+        with self.session_factory() as session:
+            project = self._require_owned_project(session, project_id=review_id, actor_username=actor_username)
+            rows = session.execute(
+                select(Document)
+                .where(Document.project_id == project.id)
+                .where(Document.lifecycle_status != "deleted")
+                .order_by(Document.lifecycle_status.asc(), Document.is_primary.desc(), Document.sort_order.asc(), Document.uploaded_at.asc())
+            ).scalars().all()
+            return [self._build_document_summary(row) for row in rows]
+
+    def update_review_document(
+        self,
+        review_id: uuid.UUID,
+        document_id: uuid.UUID,
+        payload: UpdateDocumentRequest,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> ProjectDocumentSummary:
+        with self.session_factory() as session:
+            project, document = self._require_review_document(
+                session,
+                review_id=review_id,
+                document_id=document_id,
+                actor_username=actor_username,
+            )
+            if payload.document_type is not None:
+                document.document_type = self._normalize_document_type(payload.document_type)
+                if document.document_type != "main_dpa":
+                    document.is_primary = False
+            if payload.display_name is not None:
+                clean = payload.display_name.strip()
+                document.display_name = clean or None
+            if payload.description is not None:
+                clean = payload.description.strip()
+                document.description = clean or None
+            project.updated_at = utcnow()
+            project.last_activity_at = utcnow()
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name="document_metadata_updated",
+                resource_type="document",
+                resource_id=str(document.id),
+                trace_id=self._normalize_trace_id(trace_id),
+                actor_type="USER",
+                actor_id=actor_username,
+                metadata_json={"project_id": str(project.id), "vendor_review_id": str(project.id), "document_id": str(document.id)},
+            )
+            session.commit()
+            session.refresh(document)
+            return self._build_document_summary(document)
+
+    def mark_review_document_primary(
+        self,
+        review_id: uuid.UUID,
+        document_id: uuid.UUID,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> ProjectDocumentSummary:
+        with self.session_factory() as session:
+            project, document = self._require_review_document(
+                session,
+                review_id=review_id,
+                document_id=document_id,
+                actor_username=actor_username,
+            )
+            if document.lifecycle_status != "active" or not document.active:
+                raise HTTPException(status_code=409, detail="Only active documents can be marked primary.")
+            if document.document_type != "main_dpa":
+                raise HTTPException(status_code=400, detail="Only a Main DPA document can be marked primary.")
+            current_primary = self._primary_document_for_project(session, project.id)
+            if current_primary is not None and current_primary.id != document.id:
+                current_primary.is_primary = False
+            document.is_primary = True
+            project.updated_at = utcnow()
+            project.last_activity_at = utcnow()
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name="document_marked_primary",
+                resource_type="document",
+                resource_id=str(document.id),
+                trace_id=self._normalize_trace_id(trace_id),
+                actor_type="USER",
+                actor_id=actor_username,
+                metadata_json={"project_id": str(project.id), "vendor_review_id": str(project.id), "document_id": str(document.id)},
+            )
+            session.commit()
+            session.refresh(document)
+            return self._build_document_summary(document)
+
+    def archive_review_document(
+        self,
+        review_id: uuid.UUID,
+        document_id: uuid.UUID,
+        *,
+        actor_username: str,
+        replacement_document_id: uuid.UUID | None = None,
+        trace_id: str | None = None,
+    ) -> ProjectDocumentSummary:
+        with self.session_factory() as session:
+            project, document = self._require_review_document(
+                session,
+                review_id=review_id,
+                document_id=document_id,
+                actor_username=actor_username,
+            )
+            if document.lifecycle_status == "archived":
+                return self._build_document_summary(document)
+            if document.is_primary:
+                replacement = self._resolve_primary_replacement(
+                    session,
+                    project_id=project.id,
+                    document_id=document.id,
+                    replacement_document_id=replacement_document_id,
+                )
+                if replacement is None:
+                    raise HTTPException(status_code=409, detail="Choose another active Main DPA before archiving the primary DPA.")
+                replacement.is_primary = True
+            document.is_primary = False
+            document.active = False
+            document.lifecycle_status = "archived"
+            document.archived_at = utcnow()
+            document.archive_expires_at = document.archived_at + timedelta(days=self.settings.document_archive_retention_days)
+            project.updated_at = utcnow()
+            project.last_activity_at = utcnow()
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name="document_archived",
+                resource_type="document",
+                resource_id=str(document.id),
+                trace_id=self._normalize_trace_id(trace_id),
+                actor_type="USER",
+                actor_id=actor_username,
+                metadata_json={
+                    "project_id": str(project.id),
+                    "vendor_review_id": str(project.id),
+                    "document_id": str(document.id),
+                    "archive_expires_at": document.archive_expires_at.isoformat(),
+                    "replacement_document_id": str(replacement_document_id) if replacement_document_id else None,
+                },
+            )
+            self._sync_project_state(session, project.id)
+            session.commit()
+            session.refresh(document)
+            return self._build_document_summary(document)
+
+    def restore_review_document(
+        self,
+        review_id: uuid.UUID,
+        document_id: uuid.UUID,
+        *,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> ProjectDocumentSummary:
+        with self.session_factory() as session:
+            project, document = self._require_review_document(
+                session,
+                review_id=review_id,
+                document_id=document_id,
+                actor_username=actor_username,
+                include_archived=True,
+            )
+            if document.lifecycle_status != "archived":
+                raise HTTPException(status_code=409, detail="Only archived documents can be restored.")
+            document.lifecycle_status = "active"
+            document.active = True
+            document.archived_at = None
+            document.archive_expires_at = None
+            if document.document_type == "main_dpa" and self._primary_document_for_project(session, project.id) is None:
+                document.is_primary = True
+            project.updated_at = utcnow()
+            project.last_activity_at = utcnow()
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name="document_restored",
+                resource_type="document",
+                resource_id=str(document.id),
+                trace_id=self._normalize_trace_id(trace_id),
+                actor_type="USER",
+                actor_id=actor_username,
+                metadata_json={"project_id": str(project.id), "vendor_review_id": str(project.id), "document_id": str(document.id)},
+            )
+            self._sync_project_state(session, project.id)
+            session.commit()
+            session.refresh(document)
+            return self._build_document_summary(document)
+
+    def hard_delete_review_document(
+        self,
+        review_id: uuid.UUID,
+        document_id: uuid.UUID,
+        *,
+        actor_username: str,
+        replacement_document_id: uuid.UUID | None = None,
+        trace_id: str | None = None,
+    ) -> ProjectDocumentSummary:
+        with self.session_factory() as session:
+            project, document = self._require_review_document(
+                session,
+                review_id=review_id,
+                document_id=document_id,
+                actor_username=actor_username,
+                include_archived=True,
+            )
+            if document.is_primary:
+                replacement = self._resolve_primary_replacement(
+                    session,
+                    project_id=project.id,
+                    document_id=document.id,
+                    replacement_document_id=replacement_document_id,
+                )
+                if replacement is None:
+                    raise HTTPException(status_code=409, detail="Choose another active Main DPA before deleting the primary DPA.")
+                replacement.is_primary = True
+            deleted_summary = self._hard_delete_document_sync(
+                session,
+                project=project,
+                document=document,
+                actor_username=actor_username,
+                trace_id=self._normalize_trace_id(trace_id),
+                reason="Document was hard-deleted by the user.",
+            )
+            session.commit()
+            return deleted_summary
+
+    def purge_expired_archived_documents(self) -> int:
+        purged = 0
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(Project, Document)
+                .join(Document, Document.project_id == Project.id)
+                .where(Document.lifecycle_status == "archived")
+                .where(Document.archive_expires_at.is_not(None))
+                .where(Document.archive_expires_at <= utcnow())
+                .where(Project.status != "DELETED")
+            ).all()
+            for project, document in rows:
+                if document.is_primary:
+                    continue
+                self._hard_delete_document_sync(
+                    session,
+                    project=project,
+                    document=document,
+                    actor_username=project.owner_username,
+                    trace_id=str(document.id),
+                    reason="Archived document expired after the retention window.",
+                )
+                purged += 1
+            session.commit()
+        return purged
 
     def claim_next_job(self, *, worker_id: str, job_types: tuple[str, ...] = ("parse", "checklist", "analysis")) -> ClaimedJob | None:
         with self.session_factory() as session:
@@ -2200,7 +2939,7 @@ class UploadPipelineService:
 
         draft_id = uuid.uuid4()
         trace_id = self._normalize_trace_id(trace_id)
-        created_draft_id, project_id = await asyncio.to_thread(
+        created_draft_id, project_id, input_document_ids = await asyncio.to_thread(
             self._create_checklist_draft_job,
             draft_id,
             document_id,
@@ -2213,9 +2952,34 @@ class UploadPipelineService:
             checklist_draft_id=created_draft_id,
             document_id=document_id,
             project_id=project_id,
+            vendor_review_id=project_id,
+            input_document_ids=input_document_ids,
             status="QUEUED",
             ws_url=f"/v1/checklist-drafts/{created_draft_id}/events",
             status_url=f"/v1/checklist-drafts/{created_draft_id}",
+        )
+
+    async def create_vendor_criteria_draft(
+        self,
+        review_id: uuid.UUID,
+        *,
+        user_instruction: str | None,
+        actor_username: str,
+        trace_id: str | None = None,
+    ) -> ChecklistDraftBootstrapResponse:
+        with self.session_factory() as session:
+            project = self._require_owned_project(session, project_id=review_id, actor_username=actor_username)
+            primary, _ = self._review_input_documents(session, project, require_primary=True)
+            if primary is None:
+                raise HTTPException(status_code=409, detail="Primary DPA is required before criteria generation.")
+            document_id = primary.id
+        selected_source_ids = [source.source_id for source in self.list_reference_sources()]
+        return await self.create_checklist_draft(
+            document_id=document_id,
+            selected_source_ids=selected_source_ids,
+            user_instruction=user_instruction,
+            actor_username=actor_username,
+            trace_id=trace_id,
         )
 
     def should_bypass_checklist_rate_limit_after_cancel(
@@ -2248,7 +3012,7 @@ class UploadPipelineService:
         user_instruction: str | None,
         actor_username: str,
         trace_id: str,
-    ) -> tuple[uuid.UUID, uuid.UUID]:
+    ) -> tuple[uuid.UUID, uuid.UUID, list[uuid.UUID]]:
         with self.session_factory() as session:
             project, document = self._require_owned_document(
                 session,
@@ -2257,6 +3021,8 @@ class UploadPipelineService:
             )
             if document.parse_status != "COMPLETED" or not document.extracted_text_uri:
                 raise HTTPException(status_code=409, detail="Document parsing must complete before checklist generation.")
+            _, input_documents = self._review_input_documents(session, project, require_primary=False)
+            input_document_ids = [doc.id for doc in input_documents]
             latest_job = self._latest_checklist_job_for_project(session, project.id)
             if latest_job is not None and latest_job.status in {"QUEUED", "RUNNING"}:
                 raise HTTPException(status_code=409, detail="Checklist generation is already in progress for this project.")
@@ -2282,6 +3048,10 @@ class UploadPipelineService:
                 message="Starting checklist generation.",
                 selected_source_ids=selected_source_ids,
                 user_instruction=user_instruction,
+                review_mode=DEFAULT_REVIEW_MODE,
+                profile_id=DEFAULT_PROFILE_ID,
+                input_document_ids=[str(doc_id) for doc_id in input_document_ids],
+                vendor_context_snapshot=self._vendor_context_snapshot(project),
                 available_at=utcnow(),
                 attempt_count=0,
             )
@@ -2297,14 +3067,17 @@ class UploadPipelineService:
                 actor_id=actor_username,
                 metadata_json={
                     "project_id": str(project.id),
+                    "vendor_review_id": str(project.id),
                     "document_id": str(document.id),
+                    "input_document_ids": [str(doc_id) for doc_id in input_document_ids],
+                    "profile_id": DEFAULT_PROFILE_ID,
                     "checklist_draft_id": str(job.id),
                     "selected_source_ids": list(selected_source_ids),
                 },
             )
             self._sync_project_state(session, document.project_id)
             session.commit()
-            return draft_id, document.project_id
+            return draft_id, document.project_id, input_document_ids
 
     async def _run_checklist_job(self, draft_id: uuid.UUID) -> None:
         await self._transition_checklist_job(
@@ -3062,6 +3835,7 @@ class UploadPipelineService:
                 analysis_run_id=run.id,
                 document_id=document.id,
                 project_id=document.project_id,
+                vendor_review_id=document.project_id,
                 selected_source_ids=selected_source_ids,
                 status=run.status,
             )
@@ -3105,9 +3879,11 @@ class UploadPipelineService:
                 project_id=project_id,
                 actor_username=actor_username,
             )
-            document = self._latest_document_for_project(session, project_id)
+            document = self._primary_document_for_project(session, project_id) or self._latest_document_for_project(session, project_id)
             if document is None:
                 raise HTTPException(status_code=409, detail="Project has no uploaded document.")
+            _, input_documents = self._review_input_documents(session, project, require_primary=False)
+            input_document_ids = [doc.id for doc in input_documents]
             governance = ChecklistGovernance(
                 owner=actor_username,
                 approval_status=ApprovalStatus.APPROVED,
@@ -3124,6 +3900,11 @@ class UploadPipelineService:
                 version=checklist.version,
                 selected_source_ids=payload.selected_source_ids,
                 checklist_json=checklist.model_dump(mode="json"),
+                review_mode=DEFAULT_REVIEW_MODE,
+                profile_id=DEFAULT_PROFILE_ID,
+                input_document_ids=[str(doc_id) for doc_id in input_document_ids],
+                vendor_context_snapshot=self._vendor_context_snapshot(project),
+                auto_approved=False,
                 owner=governance.owner,
                 approval_status=governance.approval_status.value,
                 approved_by=governance.approved_by,
@@ -3143,7 +3924,9 @@ class UploadPipelineService:
                 actor_id=actor_username,
                 metadata_json={
                     "project_id": str(project.id),
+                    "vendor_review_id": str(project.id),
                     "document_id": str(document.id),
+                    "input_document_ids": [str(doc_id) for doc_id in input_document_ids],
                     "approved_checklist_id": str(row.id),
                     "selected_source_ids": list(payload.selected_source_ids),
                     "check_count": len(payload.checks),
@@ -3189,12 +3972,16 @@ class UploadPipelineService:
             latest_run = self._latest_analysis_run_for_project(session, project.id)
             if latest_run is not None and latest_run.status in {"QUEUED", "RUNNING"}:
                 raise HTTPException(status_code=409, detail="Final review is already running for this project.")
-            document = self._latest_document_for_project(session, project_id)
-            if document is None or document.parse_status != "COMPLETED":
-                raise HTTPException(status_code=409, detail="Project document must be parsed before final review.")
+            self._require_full_vendor_context(project)
+            document, input_documents = self._review_input_documents(session, project, require_primary=True)
+            if document is None:
+                raise HTTPException(status_code=409, detail="Primary DPA is required before final review.")
+            input_document_ids = [doc.id for doc in input_documents]
             approved = self._latest_approved_checklist_for_project(session, project_id)
             if approved is None:
                 raise HTTPException(status_code=409, detail="An approved checklist is required before final review.")
+            if approved.stale_at is not None:
+                raise HTTPException(status_code=409, detail="Approved criteria are stale. Regenerate and approve criteria before final review.")
             self._enforce_check_run_alpha_quota(
                 session,
                 tenant_id=project.tenant_id,
@@ -3210,6 +3997,10 @@ class UploadPipelineService:
                 project_id=project.id,
                 document_id=document.id,
                 status="QUEUED",
+                review_mode=DEFAULT_REVIEW_MODE,
+                primary_document_id=document.id,
+                input_document_ids=[str(doc_id) for doc_id in input_document_ids],
+                vendor_context_snapshot=self._vendor_context_snapshot(project),
                 model_version=self.settings.gemini_review_model,
                 policy_version=approved.version,
                 stage="QUEUED",
@@ -3221,6 +4012,18 @@ class UploadPipelineService:
             )
             session.add(run)
             session.flush()
+            for input_document in input_documents:
+                session.add(
+                    AnalysisRunDocument(
+                        tenant_id=project.tenant_id,
+                        project_id=project.id,
+                        analysis_run_id=run.id,
+                        document_id=input_document.id,
+                        document_type=input_document.document_type,
+                        role="primary" if input_document.id == document.id else "supporting",
+                        included=True,
+                    )
+                )
             self._record_audit_event(
                 session,
                 tenant_id=project.tenant_id,
@@ -3232,7 +4035,10 @@ class UploadPipelineService:
                 actor_id=actor_username,
                 metadata_json={
                     "project_id": str(project.id),
+                    "vendor_review_id": str(project.id),
                     "document_id": str(document.id),
+                    "primary_document_id": str(document.id),
+                    "input_document_ids": [str(doc_id) for doc_id in input_document_ids],
                     "analysis_run_id": str(run.id),
                     "approved_checklist_id": str(approved.id),
                 },
@@ -3293,6 +4099,40 @@ class UploadPipelineService:
                     )
                 )
             return AnalysisRunReportResponse(report=payload, findings=finding_rows)
+
+    def get_approval_pack(self, run_id: uuid.UUID, *, actor_username: str) -> ApprovalPackResponse:
+        with self.session_factory() as session:
+            _, run = self._require_owned_analysis_run(session, run_id=run_id, actor_username=actor_username)
+            pack = session.execute(
+                select(ApprovalPack)
+                .where(ApprovalPack.analysis_run_id == run.id)
+                .order_by(ApprovalPack.created_at.desc())
+            ).scalars().first()
+            if pack is None:
+                raise HTTPException(status_code=404, detail="Approval Pack not found.")
+            return self._build_approval_pack_response(pack)
+
+    def _build_approval_pack_response(self, pack: ApprovalPack) -> ApprovalPackResponse:
+        return ApprovalPackResponse(
+            approval_pack_id=pack.id,
+            vendor_review_id=pack.project_id,
+            project_id=pack.project_id,
+            analysis_run_id=pack.analysis_run_id,
+            approved_checklist_id=pack.approved_checklist_id,
+            version=pack.version,
+            status=pack.status,
+            recommendation=pack.recommendation,
+            recommendation_summary=pack.recommendation_summary,
+            confidence=pack.confidence,
+            review_required=pack.review_required,
+            pack=pack.pack_json,
+            stale_at=pack.stale_at,
+            stale_reason=pack.stale_reason,
+            stale_document_ids=[uuid.UUID(str(item)) for item in (pack.stale_document_ids or [])],
+            created_at=pack.created_at,
+            updated_at=pack.updated_at,
+            published_at=pack.published_at,
+        )
 
     def assert_analysis_run_access(self, run_id: uuid.UUID, *, actor_username: str) -> None:
         with self.session_factory() as session:
@@ -3513,6 +4353,7 @@ class UploadPipelineService:
             assessments,
             synthesis,
             dpa_pages,
+            record.get("page_document_map", {}),
             started_at,
         )
         await self._transition_analysis_run(
@@ -3527,35 +4368,88 @@ class UploadPipelineService:
             run = session.get(AnalysisRun, run_id)
             if run is None:
                 return None
-            document = session.get(Document, run.document_id)
-            if document is None:
+            primary_document = session.get(Document, run.document_id)
+            if primary_document is None:
                 raise PermanentJobError("Document not found for analysis run.")
             approved = session.get(ApprovedChecklist, run.approved_checklist_id)
             if approved is None:
                 raise PermanentJobError("Approved checklist not found for analysis run.")
-            parse_job = session.execute(
-                select(DocumentParseJob)
-                .where(DocumentParseJob.document_id == document.id)
-                .order_by(DocumentParseJob.created_at.desc())
-            ).scalars().first()
-            parsed_pages_uri = (
-                parse_job.meta_json.get("parsed_pages_uri")
-                if parse_job is not None and isinstance(parse_job.meta_json, dict)
-                else None
-            )
-            chunk_count = len(
-                session.execute(select(DocumentChunk.id).where(DocumentChunk.document_id == document.id)).scalars().all()
-            )
+            ordered_ids: list[uuid.UUID] = []
+            for item in run.input_document_ids or []:
+                try:
+                    document_id = uuid.UUID(str(item))
+                except (TypeError, ValueError):
+                    continue
+                if document_id not in ordered_ids:
+                    ordered_ids.append(document_id)
+            if primary_document.id not in ordered_ids:
+                ordered_ids.insert(0, primary_document.id)
+
+            documents = session.execute(select(Document).where(Document.id.in_(ordered_ids))).scalars().all()
+            document_by_id = {document.id: document for document in documents}
+            ordered_documents = [document_by_id[document_id] for document_id in ordered_ids if document_id in document_by_id]
+            if not ordered_documents:
+                ordered_documents = [primary_document]
+
+            combined_pages: list[DpaPageRecord] = []
+            page_document_map: dict[int, dict[str, Any]] = {}
+            multi_document = len(ordered_documents) > 1
+            next_page = 1
+            for document in ordered_documents:
+                parse_job = self._latest_parse_job_for_document(session, document.id)
+                parsed_pages_uri = (
+                    parse_job.meta_json.get("parsed_pages_uri")
+                    if parse_job is not None and isinstance(parse_job.meta_json, dict)
+                    else None
+                )
+                document_pages = self._load_dpa_pages(document.extracted_text_uri, parsed_pages_uri)
+                display_name = document.display_name or document.filename
+                for page in document_pages:
+                    synthetic_page = next_page if multi_document else page.page
+                    page_text = page.text
+                    if multi_document:
+                        page_text = (
+                            f"[Document: {display_name}; Document ID: {document.id}; "
+                            f"Type: {document.document_type}; Original page: {page.page}]\n{page_text}"
+                        )
+                    combined_pages.append(DpaPageRecord(page=synthetic_page, text=page_text))
+                    page_document_map[synthetic_page] = {
+                        "document_id": str(document.id),
+                        "document_name": display_name,
+                        "document_type": document.document_type,
+                        "original_page": page.page,
+                    }
+                    next_page = synthetic_page + 1
+
+            if not combined_pages:
+                raise PermanentJobError("Parsed document text is missing. Re-parse the active documents.")
+
+            chunk_count = session.execute(
+                select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id.in_([doc.id for doc in ordered_documents]))
+            ).scalar_one()
             return {
-                "document_id": document.id,
+                "document_id": primary_document.id,
+                "document_ids": [document.id for document in ordered_documents],
+                "document_records": [
+                    {
+                        "document_id": str(document.id),
+                        "document_name": document.display_name or document.filename,
+                        "document_type": document.document_type,
+                        "is_primary": document.id == primary_document.id,
+                    }
+                    for document in ordered_documents
+                ],
+                "page_document_map": page_document_map,
                 "selected_source_ids": list(approved.selected_source_ids or []),
                 "approved_checklist": ChecklistDocument.model_validate(approved.checklist_json),
                 "sources": self.review_agent.load_sources(list(approved.selected_source_ids or [])),
-                "dpa_pages": self._load_dpa_pages(document.extracted_text_uri, parsed_pages_uri),
+                "dpa_pages": combined_pages,
                 "chunk_count": chunk_count,
             }
 
     def _load_dpa_pages(self, parsed_markdown_uri: str, parsed_pages_uri: str | None) -> list[DpaPageRecord]:
+        if not parsed_markdown_uri:
+            return []
         if isinstance(parsed_pages_uri, str) and parsed_pages_uri:
             payload = self.storage.read_json(parsed_pages_uri)
             pages_raw = payload.get("pages")
@@ -3628,6 +4522,7 @@ class UploadPipelineService:
         assessments: list[CheckAssessmentOutput],
         synthesis: ReviewSynthesisOutput,
         dpa_pages: list[DpaPageRecord],
+        page_document_map: dict[int, dict[str, Any]],
         started_at: datetime,
     ) -> None:
         check_map = {check.check_id: check for check in approved_checklist.checks}
@@ -3712,8 +4607,261 @@ class UploadPipelineService:
                     "finding_count": len(assessments),
                 },
             )
+            if project is not None:
+                self._persist_approval_pack_shell(
+                    session,
+                    project=project,
+                    run=run,
+                    approved_checklist=approved_checklist,
+                    report=report,
+                    assessments=assessments,
+                    check_map=check_map,
+                    page_document_map=page_document_map,
+                )
             self._sync_project_state(session, run.project_id)
             session.commit()
+
+    def _persist_approval_pack_shell(
+        self,
+        session: Session,
+        *,
+        project: Project,
+        run: AnalysisRun,
+        approved_checklist: ChecklistDocument,
+        report: OutputV2Report,
+        assessments: list[CheckAssessmentOutput],
+        check_map: dict[str, Any],
+        page_document_map: dict[int, dict[str, Any]],
+    ) -> ApprovalPack:
+        recommendation, recommendation_summary = self._derive_approval_recommendation(
+            report=report,
+            assessments=assessments,
+            check_map=check_map,
+        )
+        risk_rows = self._pack_risk_rows(assessments=assessments, check_map=check_map)
+        weak_rows = [
+            row for row in risk_rows
+            if row["status"] in {"NON_COMPLIANT", "PARTIAL", "UNKNOWN"} or row["missing_elements"]
+        ]
+        security_rows = [
+            row for row in risk_rows
+            if "security" in row["category"].lower() or "security" in row["title"].lower() or "tom" in row["title"].lower()
+        ]
+        transfer_rows = [
+            row for row in risk_rows
+            if any(token in f"{row['category']} {row['title']}".lower() for token in ("transfer", "subprocessor", "sub-processor", "processor"))
+        ]
+        ai_rows = [
+            row for row in risk_rows
+            if "ai" in f"{row['category']} {row['title']} {row['rationale']}".lower()
+        ]
+        vendor_questions = self._pack_vendor_questions(assessments=assessments, check_map=check_map)
+        pack_json = {
+            "vendor_review_id": str(project.id),
+            "project_id": str(project.id),
+            "analysis_run_id": str(run.id),
+            "vendor_name": project.vendor_name or project.name,
+            "tool_or_service_name": project.tool_or_service_name,
+            "intended_use_case": project.intended_use_case,
+            "business_criticality": project.business_criticality,
+            "generated_at": utcnow().isoformat(),
+            "recommendation": recommendation,
+            "recommendation_summary": recommendation_summary,
+            "executive_summary": {
+                "overall_score": report.overall.score,
+                "risk_level": report.overall.risk_level.value,
+                "summary": report.overall.summary,
+                "highlights": report.highlights,
+                "next_actions": report.next_actions,
+            },
+            "top_risks": risk_rows[:8],
+            "weak_clauses": weak_rows[:10],
+            "security_toms": {
+                "summary": self._pack_section_summary(security_rows, "No security/TOM-specific gaps were identified in the completed review."),
+                "items": security_rows[:8],
+            },
+            "subprocessors_transfers": {
+                "summary": self._pack_section_summary(transfer_rows, "No subprocessor or transfer-specific gaps were identified in the completed review."),
+                "items": transfer_rows[:8],
+            },
+            "ai_data_use_note": {
+                "has_ai_features": project.has_ai_features,
+                "summary": self._pack_section_summary(ai_rows, "No AI-specific data-use issue was identified from the current review record."),
+                "items": ai_rows[:8],
+            },
+            "vendor_questions": vendor_questions,
+            "internal_memo": self._pack_internal_memo(project, report, recommendation, vendor_questions),
+            "evidence": self._pack_evidence(assessments=assessments, check_map=check_map, page_document_map=page_document_map),
+            "disclaimer": (
+                "This Approval Pack is a deterministic summary of the stored DPA review findings. "
+                "It is not legal advice and should be reviewed by the accountable legal, privacy, or security owner."
+            ),
+        }
+
+        now = utcnow()
+        session.execute(
+            update(ApprovalPack)
+            .where(ApprovalPack.project_id == project.id, ApprovalPack.status == "published")
+            .values(status="superseded", updated_at=now)
+        )
+        pack = ApprovalPack(
+            tenant_id=project.tenant_id,
+            project_id=project.id,
+            analysis_run_id=run.id,
+            approved_checklist_id=run.approved_checklist_id,
+            version="approval_pack_shell_v1",
+            status="published",
+            recommendation=recommendation,
+            recommendation_summary=recommendation_summary,
+            confidence=report.confidence,
+            review_required=report.review_required,
+            pack_json=pack_json,
+            source_report_json=report.model_dump(mode="json"),
+            generated_by="system",
+            published_at=now,
+        )
+        session.add(pack)
+        session.flush()
+        project.current_approval_pack_id = pack.id
+        project.current_recommendation = recommendation
+        return pack
+
+    def _derive_approval_recommendation(
+        self,
+        *,
+        report: OutputV2Report,
+        assessments: list[CheckAssessmentOutput],
+        check_map: dict[str, Any],
+    ) -> tuple[str, str]:
+        high_risk = report.overall.risk_level == RiskLevel.HIGH or any(assessment.risk == RiskLevel.HIGH for assessment in assessments)
+        unknown_mandatory = any(
+            assessment.status.value == "UNKNOWN" and str(getattr(check_map.get(assessment.check_id), "severity", "")).upper() == "MANDATORY"
+            for assessment in assessments
+        )
+        uncertainty_terms = ("transfer", "subprocessor", "security", "tom", "ai")
+        unresolved_special_area = any(
+            assessment.status.value == "UNKNOWN"
+            and any(term in f"{getattr(check_map.get(assessment.check_id), 'category', '')} {getattr(check_map.get(assessment.check_id), 'title', '')}".lower() for term in uncertainty_terms)
+            for assessment in assessments
+        )
+        explicit_blocker_terms = ("prohibited", "illegal", "not permitted", "cannot proceed", "must not proceed")
+        explicit_blocker = any(
+            assessment.status.value == "NON_COMPLIANT"
+            and assessment.risk == RiskLevel.HIGH
+            and any(term in assessment.risk_rationale.lower() for term in explicit_blocker_terms)
+            for assessment in assessments
+        )
+        medium_or_partial = (
+            report.overall.risk_level == RiskLevel.MEDIUM
+            or any(assessment.risk == RiskLevel.MEDIUM for assessment in assessments)
+            or any(assessment.status.value == "PARTIAL" for assessment in assessments)
+            or any(assessment.missing_elements for assessment in assessments)
+        )
+
+        if explicit_blocker:
+            return "reject", "Explicit deterministic blockers were identified in high-risk non-compliant findings."
+        if report.abstained or high_risk or unknown_mandatory or unresolved_special_area:
+            return "escalate", "High-risk or unresolved mandatory evidence requires legal, privacy, or security escalation."
+        if medium_or_partial or report.review_required:
+            return "approve_with_conditions", "The review can proceed only if the listed gaps and follow-up questions are resolved."
+        return "approve", "The review is low risk and no review-required checks remain open."
+
+    def _pack_risk_rows(
+        self,
+        *,
+        assessments: list[CheckAssessmentOutput],
+        check_map: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for assessment in assessments:
+            check = check_map.get(assessment.check_id)
+            rows.append(
+                {
+                    "check_id": assessment.check_id,
+                    "title": getattr(check, "title", assessment.check_id),
+                    "category": getattr(check, "category", "Uncategorized"),
+                    "status": assessment.status.value,
+                    "risk": assessment.risk.value,
+                    "confidence": assessment.confidence,
+                    "missing_elements": assessment.missing_elements,
+                    "rationale": assessment.risk_rationale,
+                    "review_required": assessment.abstained or assessment.status.value == "UNKNOWN" or assessment.risk == RiskLevel.HIGH,
+                }
+            )
+        severity_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+        status_rank = {"NON_COMPLIANT": 0, "UNKNOWN": 1, "PARTIAL": 2, "COMPLIANT": 3}
+        rows.sort(key=lambda row: (severity_rank.get(row["risk"], 3), status_rank.get(row["status"], 4), row["title"]))
+        return rows
+
+    def _pack_vendor_questions(
+        self,
+        *,
+        assessments: list[CheckAssessmentOutput],
+        check_map: dict[str, Any],
+    ) -> list[str]:
+        questions: list[str] = []
+        for assessment in assessments:
+            if assessment.status.value == "COMPLIANT" and not assessment.missing_elements:
+                continue
+            check = check_map.get(assessment.check_id)
+            title = getattr(check, "title", assessment.check_id)
+            for missing in assessment.missing_elements:
+                questions.append(f"Please clarify or provide evidence for {title}: {missing}")
+            if not assessment.missing_elements:
+                questions.append(f"Please clarify the DPA position for {title}.")
+        deduped: list[str] = []
+        for question in questions:
+            if question not in deduped:
+                deduped.append(question)
+        return deduped[:12]
+
+    def _pack_evidence(
+        self,
+        *,
+        assessments: list[CheckAssessmentOutput],
+        check_map: dict[str, Any],
+        page_document_map: dict[int, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        evidence: list[dict[str, Any]] = []
+        for assessment in assessments:
+            check = check_map.get(assessment.check_id)
+            for quote in assessment.evidence_quotes:
+                page_meta = page_document_map.get(quote.page, {})
+                evidence.append(
+                    {
+                        "check_id": assessment.check_id,
+                        "title": getattr(check, "title", assessment.check_id),
+                        "page": quote.page,
+                        "quote": quote.quote,
+                        "document_id": page_meta.get("document_id"),
+                        "document_name": page_meta.get("document_name"),
+                        "document_type": page_meta.get("document_type"),
+                        "original_page": page_meta.get("original_page", quote.page),
+                    }
+                )
+        return evidence[:40]
+
+    def _pack_section_summary(self, rows: list[dict[str, Any]], fallback: str) -> str:
+        if not rows:
+            return fallback
+        high = sum(1 for row in rows if row["risk"] == "HIGH")
+        open_items = sum(1 for row in rows if row["status"] != "COMPLIANT")
+        return f"{open_items} open item(s), including {high} high-risk item(s), require follow-up."
+
+    def _pack_internal_memo(
+        self,
+        project: Project,
+        report: OutputV2Report,
+        recommendation: str,
+        vendor_questions: list[str],
+    ) -> str:
+        vendor_name = project.vendor_name or project.name
+        question_text = " ".join(vendor_questions[:3]) if vendor_questions else "No vendor questions were generated."
+        return (
+            f"Recommendation for {vendor_name}: {recommendation}. "
+            f"Overall risk is {report.overall.risk_level.value} with score {report.overall.score:.0f}. "
+            f"{report.overall.summary} Vendor follow-up: {question_text}"
+        )
 
     def _persist_partial_assessment(
         self,

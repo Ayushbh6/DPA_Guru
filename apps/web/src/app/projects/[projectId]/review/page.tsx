@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { LoaderCircle, Play, TimerReset, TriangleAlert } from "lucide-react";
-import { createAnalysisRun } from "@/lib/uploadApi";
+import { createVendorReviewRun } from "@/lib/uploadApi";
 import { useProject } from "../ProjectProvider";
 import { formatPercent, formatReviewStage, ReportUnavailable, useReviewElapsed } from "./review-ui";
 
@@ -25,7 +25,7 @@ export default function ReviewPage() {
     if (!projectId) return;
     setStarting(true);
     try {
-      const run = await createAnalysisRun(projectId);
+      const run = await createVendorReviewRun(projectId);
       connectAnalysisSocket(run.analysis_run_id);
       await refreshProject(false);
     } catch (error) {
@@ -49,12 +49,12 @@ export default function ReviewPage() {
       <section className="relative overflow-hidden px-5 py-6 md:px-7 md:py-7" style={{ background: 'var(--bg-1)' }}>
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_360px]">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.18em] font-medium" style={{ color: 'var(--text-3)' }}>Final Review Control</div>
+            <div className="text-[11px] uppercase tracking-[0.18em] font-medium" style={{ color: 'var(--text-3)' }}>Approval Pack Control</div>
             <h2 className="mt-3 max-w-4xl text-2xl font-semibold leading-tight md:text-3xl" style={{ color: 'var(--text)' }}>
-              Run the full contract review and monitor it live.
+              Run the full Vendor Review and monitor it live.
             </h2>
             <p className="mt-4 max-w-3xl text-sm leading-7 md:text-[15px]" style={{ color: 'var(--text-2)' }}>
-              This screen is now just the live control room: start the run, track progress, and watch elapsed time. The completed review opens on its own dedicated report page.
+              Checker reviews all active parsed documents against the approved criteria, then assembles a deterministic Approval Pack from the saved findings.
             </p>
 
             <div className="mt-7 flex flex-wrap gap-3">
@@ -67,16 +67,16 @@ export default function ReviewPage() {
               >
                 {(starting || running) && <LoaderCircle className="h-4 w-4 animate-spin" />}
                 {!starting && !running && <Play className="h-4 w-4" />}
-                {running ? "Review Running" : analysisRun?.status === "COMPLETED" ? "Run Again" : "Run Final Review"}
+                {running ? "Review Running" : analysisRun?.status === "COMPLETED" ? "Run Again" : "Run Review"}
               </button>
 
               {analysisRun?.status === "COMPLETED" && (
                 <Link
-                  href={`/projects/${projectId}/review/report`}
+                  href={`/vendor-reviews/${projectId}/review/report`}
                   className="inline-flex items-center gap-2 border px-4 py-2.5 text-sm transition-colors"
                   style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
                 >
-                  Open Full Report
+                  Open Approval Pack
                 </Link>
               )}
             </div>
@@ -159,15 +159,15 @@ export default function ReviewPage() {
             <div>
               <div className="text-sm font-medium" style={{ color: 'var(--success)' }}>The review run is complete.</div>
               <div className="mt-1 text-sm" style={{ color: 'var(--success)', opacity: 0.75 }}>
-                Open the dedicated report page for the full outcome, evidence, and check-by-check analysis.
+                Open the Approval Pack for recommendation, risks, questions, memo, and evidence.
               </div>
             </div>
             <Link
-              href={`/projects/${projectId}/review/report`}
+              href={`/vendor-reviews/${projectId}/review/report`}
               className="inline-flex items-center gap-2 border px-4 py-2 text-sm transition-colors"
               style={{ borderColor: 'var(--success)', background: 'var(--success-bg)', color: 'var(--text)' }}
             >
-              Open Full Report
+              Open Approval Pack
             </Link>
           </div>
         )}

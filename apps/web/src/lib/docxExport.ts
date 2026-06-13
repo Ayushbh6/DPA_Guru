@@ -242,7 +242,7 @@ export async function downloadChecklistDocx(input: ChecklistExportInput) {
   }
 
   const document = new Document({
-    creator: "Merlin AI",
+    creator: "Checker",
     title: `Approved Checklist - ${input.projectName}`,
     sections: [{ children }],
   });
@@ -274,7 +274,7 @@ function countFindingStatuses(findings: AnalysisFindingDetail[]) {
 export async function downloadFinalReportDocx(input: FinalReportExportInput) {
   const counts = countFindingStatuses(input.findings);
   const children: Array<Paragraph | Table> = [
-    heading("Final Review Report", HeadingLevel.TITLE, 0),
+    heading("Approval Pack", HeadingLevel.TITLE, 0),
     body(`Project: ${input.projectName}`),
     detailTable([
       ["Generated", new Date().toLocaleString()],
@@ -344,11 +344,11 @@ export async function downloadFinalReportDocx(input: FinalReportExportInput) {
   }
 
   const document = new Document({
-    creator: "Merlin AI",
-    title: `Final Review Report - ${input.projectName}`,
+    creator: "Checker",
+    title: `Approval Pack - ${input.projectName}`,
     sections: [{ children }],
   });
 
   const blob = await Packer.toBlob(document);
-  saveBlob(blob, `${slugify(input.projectName)}_final_review_report.docx`);
+  saveBlob(blob, `${slugify(input.projectName)}_approval_pack.docx`);
 }

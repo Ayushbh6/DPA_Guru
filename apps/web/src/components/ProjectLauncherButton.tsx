@@ -4,7 +4,7 @@ import { startTransition, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LoaderCircle, Plus } from "lucide-react";
 
-import { createProject } from "@/lib/uploadApi";
+import { createVendorReview } from "@/lib/uploadApi";
 import { useAuth } from "@/components/AuthProvider";
 
 type Props = {
@@ -15,7 +15,7 @@ type Props = {
 
 export default function ProjectLauncherButton({
   className = "",
-  label = "Begin Analysis",
+  label = "Begin Review",
   icon = false,
 }: Props) {
   const router = useRouter();
@@ -30,9 +30,19 @@ export default function ProjectLauncherButton({
     if (loading) return;
     setLoading(true);
     try {
-      const project = await createProject();
+      const vendorName = prompt("Vendor name:");
+      if (!vendorName?.trim()) return;
+      const intendedUseCase = prompt("Intended use case:");
+      if (!intendedUseCase?.trim()) return;
+      const project = await createVendorReview({
+        vendor_name: vendorName.trim(),
+        intended_use_case: intendedUseCase.trim(),
+        shares_personal_data: true,
+        business_criticality: "medium",
+        name: `${vendorName.trim()} Vendor Review`,
+      });
       startTransition(() => {
-        router.push(project.workspace_url || `/projects/${project.project_id}`);
+        router.push(project.workspace_url || `/vendor-reviews/${project.vendor_review_id || project.project_id}/dashboard`);
       });
     } finally {
       setLoading(false);
@@ -44,7 +54,7 @@ export default function ProjectLauncherButton({
       {loading ? (
         <>
           <LoaderCircle className="h-4 w-4 animate-spin" />
-          <span>Creating Workspace</span>
+          <span>Creating Review</span>
         </>
       ) : (
         <>

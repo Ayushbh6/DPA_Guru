@@ -74,13 +74,13 @@ export default function HeroScroll() {
             className="text-7xl md:text-9xl font-bold tracking-tight text-center"
             style={{ color: 'var(--text)' }}
           >
-            Merlin AI
+            Checker
           </h1>
           <p
             className="text-xs md:text-sm tracking-[0.3em] uppercase font-light mt-4"
             style={{ color: 'var(--accent)' }}
           >
-            DPA Analyzer
+            Vendor Review Workspace
           </p>
         </div>
 
@@ -109,7 +109,7 @@ export default function HeroScroll() {
                   className="text-[10px] md:text-xs tracking-widest uppercase font-medium"
                   style={{ color: 'var(--text-3)' }}
                 >
-                  Analysis Mode
+                  Review Mode
                 </span>
               </div>
 
@@ -167,4 +167,3 @@ export default function HeroScroll() {
     </div>
   );
 }
-

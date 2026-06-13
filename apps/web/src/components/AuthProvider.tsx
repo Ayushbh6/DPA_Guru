@@ -17,7 +17,7 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 function isProtectedPath(pathname: string) {
-  return pathname.startsWith("/projects") || pathname.startsWith("/analysis");
+  return pathname.startsWith("/projects") || pathname.startsWith("/vendor-reviews") || pathname.startsWith("/analysis");
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

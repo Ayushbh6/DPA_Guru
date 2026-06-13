@@ -6,8 +6,9 @@ import { useRouter } from "next/navigation";
 import { ArrowUpRight, LoaderCircle, Plus, Search, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
-import { createProject, listProjects, type ProjectSummary } from "@/lib/uploadApi";
+import { listVendorReviews, type ProjectSummary } from "@/lib/uploadApi";
 import { useAuth } from "@/components/AuthProvider";
+import VendorReviewCreateDialog from "@/components/VendorReviewCreateDialog";
 
 function formatRelativeDate(value: string) {
   const date = new Date(value);
@@ -26,15 +27,12 @@ function statusLabel(status: string) {
 export default function ActionSection() {
   const router = useRouter();
   const { user } = useAuth();
-  const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
-  const createInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (modalOpen) {
@@ -42,30 +40,6 @@ export default function ActionSection() {
       return () => clearTimeout(timer);
     }
   }, [modalOpen]);
-
-  useEffect(() => {
-    if (createModalOpen) {
-      const timer = setTimeout(() => createInputRef.current?.focus(), 50);
-      return () => clearTimeout(timer);
-    }
-  }, [createModalOpen]);
-
-  async function handleCreate() {
-    if (!user) {
-      router.push("/login");
-      return;
-    }
-    if (creating || !newProjectName.trim()) return;
-    setCreating(true);
-    try {
-      const project = await createProject(newProjectName.trim());
-      startTransition(() => {
-        router.push(project.workspace_url || `/projects/${project.project_id}`);
-      });
-    } finally {
-      setCreating(false);
-    }
-  }
 
   async function openModal() {
     if (!user) {
@@ -76,17 +50,26 @@ export default function ActionSection() {
     setModalOpen(true);
     setLoadingProjects(true);
     try {
-      const items = await listProjects();
+      const items = await listVendorReviews();
       setProjects(items);
     } finally {
       setLoadingProjects(false);
     }
   }
 
+  function openCreateModal() {
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+    setCreateModalOpen(true);
+  }
+
   const filtered = projects.filter((p) => {
     const q = search.toLowerCase();
     return (
       p.name.toLowerCase().includes(q) ||
+      (p.vendor_name ?? "").toLowerCase().includes(q) ||
       (p.document_filename ?? "").toLowerCase().includes(q)
     );
   });
@@ -107,24 +90,24 @@ export default function ActionSection() {
           className="text-4xl md:text-5xl lg:text-6xl font-semibold tracking-tight"
           style={{ color: 'var(--text)' }}
         >
-          Start a new analysis.
+          Start a Vendor Review.
         </h2>
         <p
           className="mt-4 text-base leading-relaxed max-w-md mx-auto"
           style={{ color: 'var(--text-2)' }}
         >
-          One project per DPA. Upload, parse, and generate a compliance checklist — all in one place.
+          Create a Checker workspace, upload the main DPA and supporting documents, then generate review criteria and an Approval Pack.
         </p>
 
         <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:justify-center">
           <button
             type="button"
-            onClick={() => setCreateModalOpen(true)}
+            onClick={openCreateModal}
             className="inline-flex items-center justify-center gap-2 px-8 py-3.5 text-sm font-medium transition-opacity hover:opacity-80"
             style={{ background: 'var(--invert)', color: 'var(--invert-fg)' }}
           >
             <Plus className="h-4 w-4" />
-            <span>Create New Analysis</span>
+            <span>Create Vendor Review</span>
           </button>
           <button
             type="button"
@@ -132,101 +115,20 @@ export default function ActionSection() {
             className="inline-flex items-center justify-center gap-2 px-8 py-3.5 text-sm transition-opacity hover:opacity-70"
             style={{ border: '1px solid var(--line)', color: 'var(--text-2)' }}
           >
-            Open Existing Analysis
+            Open Existing Review
           </button>
         </div>
       </div>
 
-      <AnimatePresence>
-        {createModalOpen && (
-          <>
-            <motion.div
-              key="create-backdrop"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-40 backdrop-blur-sm"
-              style={{ background: 'rgba(0,0,0,0.55)' }}
-              onClick={() => !creating && setCreateModalOpen(false)}
-            />
-            <motion.div
-              key="create-modal-wrapper"
-              initial={{ opacity: 0, scale: 0.96, y: 12 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 8 }}
-              transition={{ duration: 0.22, ease: "easeOut" }}
-              className="fixed inset-0 z-50 flex items-center justify-center p-4"
-              onClick={() => !creating && setCreateModalOpen(false)}
-            >
-              <div
-                className="w-full max-w-md p-6 text-left"
-                style={{ background: 'var(--bg-1)', border: '1px solid var(--line)' }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-medium" style={{ color: 'var(--text)' }}>Name Your Analysis</h3>
-                  <button
-                    type="button"
-                    onClick={() => !creating && setCreateModalOpen(false)}
-                    className="transition-colors"
-                    style={{ color: 'var(--text-3)' }}
-                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
-                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-                <p className="text-sm mb-5" style={{ color: 'var(--text-2)' }}>
-                  Give this DPA review a title to easily find it later.
-                </p>
-                <input
-                  ref={createInputRef}
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && newProjectName.trim()) {
-                      void handleCreate();
-                    }
-                  }}
-                  placeholder="e.g. Acme Corp DPA Q3"
-                  className="w-full px-4 py-3 text-sm outline-none mb-6"
-                  style={{
-                    background: 'var(--bg-2)',
-                    border: '1px solid var(--line)',
-                    color: 'var(--text)',
-                  }}
-                  onFocus={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
-                  onBlur={e => (e.currentTarget.style.borderColor = 'var(--line)')}
-                />
-                <div className="flex justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setCreateModalOpen(false)}
-                    disabled={creating}
-                    className="px-4 py-2.5 text-sm transition-colors"
-                    style={{ color: 'var(--text-2)' }}
-                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
-                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-2)')}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleCreate()}
-                    disabled={creating || !newProjectName.trim()}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium disabled:opacity-40 transition-opacity hover:opacity-80"
-                    style={{ background: 'var(--invert)', color: 'var(--invert-fg)' }}
-                  >
-                    {creating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-                    Start Analysis
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+      <VendorReviewCreateDialog
+        open={createModalOpen}
+        onOpenChange={setCreateModalOpen}
+        onCreated={(project) => {
+          startTransition(() => {
+            router.push(project.workspace_url || `/vendor-reviews/${project.vendor_review_id || project.project_id}/dashboard`);
+          });
+        }}
+      />
 
       <AnimatePresence>
         {modalOpen && (
@@ -263,7 +165,7 @@ export default function ActionSection() {
                     className="text-[11px] uppercase tracking-[0.22em]"
                     style={{ color: 'var(--text-3)' }}
                   >
-                    Saved Analyses
+                    Saved Reviews
                   </div>
                   <button
                     type="button"
@@ -287,7 +189,7 @@ export default function ActionSection() {
                       ref={searchRef}
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Search projects..."
+                      placeholder="Search reviews..."
                       className="flex-1 bg-transparent text-sm outline-none"
                       style={{ color: 'var(--text)' }}
                     />
@@ -304,7 +206,7 @@ export default function ActionSection() {
                     filtered.map((project) => (
                       <Link
                         key={project.project_id}
-                        href={`/projects/${project.project_id}`}
+                        href={`/vendor-reviews/${project.vendor_review_id || project.project_id}/dashboard`}
                         onClick={() => setModalOpen(false)}
                         className="group flex items-center justify-between gap-4 px-5 py-4 transition-colors"
                         style={{ borderBottom: '1px solid var(--line)' }}
@@ -312,7 +214,7 @@ export default function ActionSection() {
                         onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                       >
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{project.name}</div>
+                          <div className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{project.vendor_name || project.name}</div>
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style={{ color: 'var(--text-3)' }}>
                             <span>{statusLabel(project.status)}</span>
                             {project.document_filename && (
@@ -329,7 +231,7 @@ export default function ActionSection() {
                     ))
                   ) : (
                     <div className="px-5 py-8 text-sm" style={{ color: 'var(--text-3)' }}>
-                      {search ? "No matching projects." : "No saved projects yet."}
+                      {search ? "No matching reviews." : "No saved reviews yet."}
                     </div>
                   )}
                 </div>

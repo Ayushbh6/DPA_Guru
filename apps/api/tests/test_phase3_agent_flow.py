@@ -198,6 +198,8 @@ class FakeGenAIClient:
 
     def generate_content(self, *, model, contents, config):  # noqa: ANN001
         self._step += 1
+        assert config.response_schema is None
+        assert isinstance(config.response_json_schema, dict)
         system_prompt = config.system_instruction or ""
         if "delegated Criteria Research agent" in system_prompt:
             return self._criteria_research_response(contents)
@@ -641,7 +643,11 @@ def test_phase3_checklist_and_review_flow_with_seeded_test_pdf(tmp_path: Path, m
     assert draft_snapshot.result is not None
     assert draft_snapshot.result.review_profile is not None
     assert draft_snapshot.result.document_inventory
-    assert len(draft_snapshot.result.checks) == 2
+    assert len(draft_snapshot.result.checks) == 8
+    assert {
+        check.category.value if hasattr(check.category, "value") else str(check.category)
+        for check in draft_snapshot.result.checks
+    } == set(draft_snapshot.result.review_profile.mandatory_categories)
 
     approved = service.approve_checklist(
         project_id,
@@ -669,7 +675,7 @@ def test_phase3_checklist_and_review_flow_with_seeded_test_pdf(tmp_path: Path, m
     run_snapshot = service.get_analysis_run_snapshot(run.analysis_run_id, actor_username="local-dev")
     assert run_snapshot is not None
     assert run_snapshot.status == "COMPLETED"
-    assert run_snapshot.finding_count == 2
+    assert run_snapshot.finding_count == 8
 
     report = service.get_analysis_report(run.analysis_run_id, actor_username="local-dev")
     pack = service.get_approval_pack(run.analysis_run_id, actor_username="local-dev")
@@ -697,7 +703,7 @@ def test_phase3_checklist_and_review_flow_with_seeded_test_pdf(tmp_path: Path, m
         role_names = [row.agent_role for row in roles]
         assert "criteria" in role_names
         assert "criteria_research" in role_names
-        assert role_names.count("review") == 2
+        assert role_names.count("review") == 8
         assert "approval_pack" in role_names
         assert any(row.agent_role == "criteria_research" and row.parent_agent_run_id is not None for row in roles)
 
@@ -725,6 +731,6 @@ def test_phase3_checklist_and_review_flow_with_seeded_test_pdf(tmp_path: Path, m
         assert tool_call_count >= 8
         assert output_count >= 4
         assert set(stage_names) == {"action_pack", "assembler"}
-        assert len(findings) == 2
+        assert len(findings) == 8
         assert any(finding.recommendation for finding in findings)
         assert any(finding.evidence_json for finding in findings)

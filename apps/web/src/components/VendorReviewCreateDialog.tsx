@@ -5,6 +5,7 @@ import {
   BriefcaseBusiness,
   Check,
   Database,
+  Globe2,
   LoaderCircle,
   ShieldAlert,
   ShieldCheck,
@@ -17,6 +18,7 @@ import {
   createVendorReview,
   type BusinessCriticality,
   type CreateProjectResponse,
+  type VendorRegion,
 } from "@/lib/uploadApi";
 
 type Props = {
@@ -35,12 +37,36 @@ const CRITICALITY_OPTIONS: Array<{
   { value: "high", label: "High", copy: "Critical service or sensitive data exposure." },
 ];
 
+const DATA_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "customer_personal_data", label: "Customer" },
+  { value: "employee_personal_data", label: "Employee" },
+  { value: "support_content", label: "Support content" },
+  { value: "account_contact_data", label: "Account/contact" },
+  { value: "usage_data", label: "Usage data" },
+  { value: "sensitive_personal_data", label: "Sensitive" },
+];
+
+const REGION_OPTIONS: Array<{ value: VendorRegion; label: string }> = [
+  { value: "US", label: "United States" },
+  { value: "EU_EEA", label: "EU / EEA" },
+  { value: "UK", label: "United Kingdom" },
+  { value: "OTHER", label: "Other / global" },
+  { value: "UNKNOWN", label: "Unknown" },
+];
+
+const CUSTOMER_DATA_TYPES = new Set(["customer_personal_data", "support_content", "account_contact_data", "usage_data"]);
+
 export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated }: Props) {
   const [creating, setCreating] = useState(false);
   const [vendorName, setVendorName] = useState("");
   const [intendedUseCase, setIntendedUseCase] = useState("");
   const [sharesPersonalData, setSharesPersonalData] = useState(true);
   const [businessCriticality, setBusinessCriticality] = useState<BusinessCriticality>("medium");
+  const [dataTypes, setDataTypes] = useState<string[]>(["customer_personal_data"]);
+  const [vendorRegion, setVendorRegion] = useState<VendorRegion>("US");
+  const [processesEuPersonalData, setProcessesEuPersonalData] = useState(true);
+  const [transfersDataOutsideEea, setTransfersDataOutsideEea] = useState(true);
+  const [hasAiFeatures, setHasAiFeatures] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const vendorInputRef = useRef<HTMLInputElement>(null);
 
@@ -55,6 +81,11 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
     setIntendedUseCase("");
     setSharesPersonalData(true);
     setBusinessCriticality("medium");
+    setDataTypes(["customer_personal_data"]);
+    setVendorRegion("US");
+    setProcessesEuPersonalData(true);
+    setTransfersDataOutsideEea(true);
+    setHasAiFeatures(false);
     setError(null);
   }
 
@@ -64,15 +95,24 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
   }
 
   async function handleCreate() {
-    if (creating || !vendorName.trim() || !intendedUseCase.trim()) return;
+    if (creating || !vendorName.trim() || !intendedUseCase.trim() || !dataTypes.length || !vendorRegion) return;
     setCreating(true);
     setError(null);
     try {
+      const selectedDataTypes = sharesPersonalData ? dataTypes : ["no_personal_data"];
       const project = await createVendorReview({
         vendor_name: vendorName.trim(),
         intended_use_case: intendedUseCase.trim(),
         shares_personal_data: sharesPersonalData,
+        shares_customer_data: sharesPersonalData && selectedDataTypes.some((item) => CUSTOMER_DATA_TYPES.has(item)),
+        shares_employee_data: sharesPersonalData && selectedDataTypes.includes("employee_personal_data"),
+        shares_sensitive_data: sharesPersonalData && selectedDataTypes.includes("sensitive_personal_data"),
+        has_ai_features: hasAiFeatures,
         business_criticality: businessCriticality,
+        data_types: selectedDataTypes,
+        vendor_region: vendorRegion,
+        processes_eu_personal_data: processesEuPersonalData,
+        transfers_data_outside_eea: transfersDataOutsideEea,
         name: `${vendorName.trim()} Vendor Review`,
       });
       reset();
@@ -84,7 +124,29 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
     }
   }
 
-  const canCreate = vendorName.trim().length > 0 && intendedUseCase.trim().length > 0;
+  function toggleDataType(value: string) {
+    setDataTypes((current) => {
+      const next = current.includes(value) ? current.filter((item) => item !== value) : [...current, value];
+      return next.length ? next : current;
+    });
+  }
+
+  function setPersonalData(value: boolean) {
+    setSharesPersonalData(value);
+    if (!value) {
+      setDataTypes(["no_personal_data"]);
+      setProcessesEuPersonalData(false);
+      setTransfersDataOutsideEea(false);
+      return;
+    }
+    if (dataTypes.includes("no_personal_data")) {
+      setDataTypes(["customer_personal_data"]);
+      setProcessesEuPersonalData(true);
+      setTransfersDataOutsideEea(true);
+    }
+  }
+
+  const canCreate = vendorName.trim().length > 0 && intendedUseCase.trim().length > 0 && dataTypes.length > 0 && !!vendorRegion;
 
   return (
     <AnimatePresence>
@@ -229,7 +291,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                             <button
                               key={String(value)}
                               type="button"
-                              onClick={() => setSharesPersonalData(value)}
+                              onClick={() => setPersonalData(value)}
                               className="flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors"
                               style={{
                                 background: selected ? "var(--invert)" : "var(--bg-1)",
@@ -274,6 +336,118 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                         })}
                       </div>
                     </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-[1fr_0.72fr]">
+                    <div>
+                      <div className="mb-2 text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
+                        Data profile
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {DATA_TYPE_OPTIONS.map((option) => {
+                          const selected = dataTypes.includes(option.value) && sharesPersonalData;
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              disabled={!sharesPersonalData}
+                              onClick={() => toggleDataType(option.value)}
+                              className="inline-flex min-h-11 items-center justify-center gap-2 border px-3 py-2 text-sm transition-colors disabled:opacity-45"
+                              style={{
+                                borderColor: selected ? "var(--accent)" : "var(--line)",
+                                background: selected ? "var(--bg-2)" : "var(--bg-1)",
+                                color: selected ? "var(--text)" : "var(--text-2)",
+                              }}
+                            >
+                              {selected ? <Check className="h-4 w-4 shrink-0" /> : <Database className="h-4 w-4 shrink-0" />}
+                              <span className="text-center leading-5">{option.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <label className="block">
+                      <span className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
+                        Vendor region
+                      </span>
+                      <div className="relative">
+                        <Globe2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: "var(--text-3)" }} />
+                        <select
+                          value={vendorRegion}
+                          onChange={(event) => setVendorRegion(event.target.value as VendorRegion)}
+                          className="h-11 w-full appearance-none px-9 text-sm outline-none"
+                          style={{ background: "var(--bg-1)", border: "1px solid var(--line)", color: "var(--text)" }}
+                        >
+                          {REGION_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div>
+                      <div className="mb-2 text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
+                        EU personal data
+                      </div>
+                      <div className="grid grid-cols-2 border" style={{ borderColor: "var(--line)" }}>
+                        {[true, false].map((value) => {
+                          const selected = processesEuPersonalData === value;
+                          return (
+                            <button
+                              key={String(value)}
+                              type="button"
+                              onClick={() => setProcessesEuPersonalData(value)}
+                              className="px-3 py-2.5 text-sm font-medium transition-colors"
+                              style={{
+                                background: selected ? "var(--invert)" : "var(--bg-1)",
+                                color: selected ? "var(--invert-fg)" : "var(--text-2)",
+                                borderRight: value ? "1px solid var(--line)" : undefined,
+                              }}
+                            >
+                              {value ? "Yes" : "No"}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="mb-2 text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
+                        EEA transfer
+                      </div>
+                      <div className="grid grid-cols-2 border" style={{ borderColor: "var(--line)" }}>
+                        {[true, false].map((value) => {
+                          const selected = transfersDataOutsideEea === value;
+                          return (
+                            <button
+                              key={String(value)}
+                              type="button"
+                              onClick={() => setTransfersDataOutsideEea(value)}
+                              className="px-3 py-2.5 text-sm font-medium transition-colors"
+                              style={{
+                                background: selected ? "var(--invert)" : "var(--bg-1)",
+                                color: selected ? "var(--invert-fg)" : "var(--text-2)",
+                                borderRight: value ? "1px solid var(--line)" : undefined,
+                              }}
+                            >
+                              {value ? "Yes" : "No"}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <label className="flex min-h-[68px] items-center gap-3 border px-4 py-3 text-sm" style={{ borderColor: "var(--line)", background: "var(--bg-1)", color: "var(--text-2)" }}>
+                      <input
+                        type="checkbox"
+                        checked={hasAiFeatures}
+                        onChange={(event) => setHasAiFeatures(event.target.checked)}
+                      />
+                      <span>AI features or model training</span>
+                    </label>
                   </div>
 
                   {error ? (

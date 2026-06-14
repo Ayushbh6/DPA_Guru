@@ -154,13 +154,32 @@ class VendorReviewCreationContext(BaseModel):
     business_criticality: BusinessCriticality
     vendor_website: str | None = None
     tool_or_service_name: str | None = Field(default=None, max_length=255)
+    data_types: list[str] = Field(default_factory=list)
+    shares_customer_data: bool = False
+    shares_employee_data: bool = False
+    shares_sensitive_data: bool = False
+    has_ai_features: bool = False
+    vendor_region: VendorRegion | None = None
+    processes_eu_personal_data: bool | None = None
+    transfers_data_outside_eea: bool | None = None
+    internal_owner: str | None = Field(default=None, max_length=255)
+    review_deadline: date | None = None
 
-    @field_validator("vendor_name", "intended_use_case", "vendor_website", "tool_or_service_name", mode="before")
+    @field_validator("vendor_name", "intended_use_case", "vendor_website", "tool_or_service_name", "internal_owner", mode="before")
     @classmethod
     def strip_creation_text(cls, value):
         if isinstance(value, str):
             value = value.strip()
             return value or None
+        return value
+
+    @field_validator("data_types", mode="before")
+    @classmethod
+    def normalize_creation_data_types(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
 
@@ -230,6 +249,7 @@ class AnalysisRunSummary(BaseModel):
     completed_at: datetime | None = None
     latency_ms: int | None = None
     cost_usd: float | None = None
+    finding_count: int = 0
 
 
 class ApprovedChecklistSummary(BaseModel):

@@ -48,6 +48,7 @@ export type UploadBootstrapResponse = {
 };
 
 export type BusinessCriticality = "low" | "medium" | "high";
+export type VendorRegion = "EU_EEA" | "US" | "UK" | "OTHER" | "UNKNOWN";
 
 export type VendorDocumentType =
   | "main_dpa"
@@ -77,7 +78,7 @@ export type VendorReviewContext = {
   shares_sensitive_data: boolean;
   has_ai_features: boolean;
   business_criticality?: BusinessCriticality | null;
-  vendor_region?: "eea" | "uk" | "us" | "global" | "unknown" | null;
+  vendor_region?: VendorRegion | null;
   processes_eu_personal_data?: boolean | null;
   transfers_data_outside_eea?: boolean | null;
   internal_owner?: string | null;
@@ -92,6 +93,16 @@ export type VendorReviewCreationContext = {
   business_criticality: BusinessCriticality;
   vendor_website?: string | null;
   tool_or_service_name?: string | null;
+  data_types?: string[];
+  shares_customer_data?: boolean;
+  shares_employee_data?: boolean;
+  shares_sensitive_data?: boolean;
+  has_ai_features?: boolean;
+  vendor_region?: VendorRegion | null;
+  processes_eu_personal_data?: boolean | null;
+  transfers_data_outside_eea?: boolean | null;
+  internal_owner?: string | null;
+  review_deadline?: string | null;
   name?: string | null;
 };
 
@@ -178,6 +189,7 @@ export type AnalysisRunSummary = {
   completed_at?: string | null;
   latency_ms?: number | null;
   cost_usd?: number | null;
+  finding_count?: number;
 };
 
 export type ReferenceSource = {

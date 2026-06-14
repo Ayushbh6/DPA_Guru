@@ -271,13 +271,24 @@ class UploadPipelineService:
                 vendor_website=payload.vendor_website,
                 tool_or_service_name=payload.tool_or_service_name,
                 intended_use_case=clean_use_case,
+                data_types=list(payload.data_types or []),
                 shares_personal_data=payload.shares_personal_data,
+                shares_customer_data=payload.shares_customer_data,
+                shares_employee_data=payload.shares_employee_data,
+                shares_sensitive_data=payload.shares_sensitive_data,
+                has_ai_features=payload.has_ai_features,
                 business_criticality=payload.business_criticality,
+                vendor_region=payload.vendor_region,
+                processes_eu_personal_data=payload.processes_eu_personal_data,
+                transfers_data_outside_eea=payload.transfers_data_outside_eea,
+                internal_owner=payload.internal_owner,
+                review_deadline=payload.review_deadline,
                 context_completed_at=None,
                 created_at=now,
                 updated_at=now,
                 last_activity_at=now,
             )
+            project.context_completed_at = now if self._vendor_context_complete(self._vendor_context_response(project)) else None
             session.add(project)
             session.flush()
             actor_type, actor_id = self._actor_fields(actor_username)
@@ -822,23 +833,41 @@ class UploadPipelineService:
         return clean
 
     def _apply_vendor_context(self, project: Project, context: VendorReviewContext) -> None:
-        project.vendor_name = context.vendor_name
-        project.vendor_website = context.vendor_website
-        project.tool_or_service_name = context.tool_or_service_name
-        project.intended_use_case = context.intended_use_case
-        project.data_types = list(context.data_types or [])
-        project.shares_personal_data = bool(context.shares_personal_data)
-        project.shares_customer_data = bool(context.shares_customer_data)
-        project.shares_employee_data = bool(context.shares_employee_data)
-        project.shares_sensitive_data = bool(context.shares_sensitive_data)
-        project.has_ai_features = bool(context.has_ai_features)
-        project.business_criticality = context.business_criticality
-        project.vendor_region = context.vendor_region
-        project.processes_eu_personal_data = context.processes_eu_personal_data
-        project.transfers_data_outside_eea = context.transfers_data_outside_eea
-        project.internal_owner = context.internal_owner
-        project.review_deadline = context.review_deadline
-        project.context_completed_at = utcnow() if self._vendor_context_complete(context) else None
+        fields = context.model_fields_set
+        if "vendor_name" in fields:
+            project.vendor_name = context.vendor_name
+        if "vendor_website" in fields:
+            project.vendor_website = context.vendor_website
+        if "tool_or_service_name" in fields:
+            project.tool_or_service_name = context.tool_or_service_name
+        if "intended_use_case" in fields:
+            project.intended_use_case = context.intended_use_case
+        if "data_types" in fields:
+            project.data_types = list(context.data_types or [])
+        if "shares_personal_data" in fields:
+            project.shares_personal_data = bool(context.shares_personal_data)
+        if "shares_customer_data" in fields:
+            project.shares_customer_data = bool(context.shares_customer_data)
+        if "shares_employee_data" in fields:
+            project.shares_employee_data = bool(context.shares_employee_data)
+        if "shares_sensitive_data" in fields:
+            project.shares_sensitive_data = bool(context.shares_sensitive_data)
+        if "has_ai_features" in fields:
+            project.has_ai_features = bool(context.has_ai_features)
+        if "business_criticality" in fields:
+            project.business_criticality = context.business_criticality
+        if "vendor_region" in fields:
+            project.vendor_region = context.vendor_region
+        if "processes_eu_personal_data" in fields:
+            project.processes_eu_personal_data = context.processes_eu_personal_data
+        if "transfers_data_outside_eea" in fields:
+            project.transfers_data_outside_eea = context.transfers_data_outside_eea
+        if "internal_owner" in fields:
+            project.internal_owner = context.internal_owner
+        if "review_deadline" in fields:
+            project.review_deadline = context.review_deadline
+        merged_context = self._vendor_context_response(project)
+        project.context_completed_at = utcnow() if self._vendor_context_complete(merged_context) else None
 
     def _vendor_context_snapshot(self, project: Project) -> dict[str, Any]:
         return {
@@ -1610,6 +1639,7 @@ class UploadPipelineService:
         )
 
     def _build_analysis_run_summary(self, session: Session, run: AnalysisRun) -> AnalysisRunSummary:
+        finding_count = session.execute(select(func.count(Finding.id)).where(Finding.run_id == run.id)).scalar_one()
         return AnalysisRunSummary(
             analysis_run_id=run.id,
             vendor_review_id=run.project_id,
@@ -1630,6 +1660,7 @@ class UploadPipelineService:
             completed_at=run.completed_at,
             latency_ms=run.latency_ms,
             cost_usd=run.cost_usd,
+            finding_count=finding_count,
         )
 
     def _build_document_summary(self, document: Document) -> ProjectDocumentSummary:
@@ -4067,12 +4098,8 @@ class UploadPipelineService:
                 run = session.get(AnalysisRun, run_id)
                 if run is None:
                     return None
-            finding_count = len(
-                session.execute(select(Finding.id).where(Finding.run_id == run.id)).scalars().all()
-            )
             return AnalysisRunSnapshot(
                 **self._build_analysis_run_summary(session, run).model_dump(mode="python"),
-                finding_count=finding_count,
             )
 
     def get_analysis_report(self, run_id: uuid.UUID, *, actor_username: str) -> AnalysisRunReportResponse:

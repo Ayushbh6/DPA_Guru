@@ -7,7 +7,9 @@ from typing import Any, Iterable
 from sqlalchemy.orm import Session, sessionmaker
 
 from dpa_checklist import (
+    CHECKLIST_CATEGORY_COVERAGE,
     ChecklistCategory,
+    ChecklistDraftItem,
     ChecklistDraftOutput,
     CriteriaValidationWarning,
     ReviewProfile,
@@ -157,6 +159,11 @@ class Phase3AgentCoordinator:
             run_started_cb=_record_parent_run_id,
         )
         result = runner.run()
+        checks_with_fallbacks, fallback_warnings = self._ensure_mandatory_category_coverage(
+            context,
+            list(result.output.checks),
+        )
+        normalized_checks = self._normalize_check_ids(checks_with_fallbacks)
         final_output = ChecklistDraftOutput(
             version=result.output.version,
             meta=result.output.meta,
@@ -165,9 +172,10 @@ class Phase3AgentCoordinator:
             document_inventory=context.documents,
             validation_warnings=self._merge_validation_warnings(
                 list(result.output.validation_warnings),
-                self._deterministic_criteria_warnings(context, result.output.checks),
+                fallback_warnings,
+                self._deterministic_criteria_warnings(context, normalized_checks),
             ),
-            checks=self._normalize_check_ids(result.output.checks),
+            checks=normalized_checks,
         )
         return result.agent_run_id, final_output
 
@@ -368,24 +376,114 @@ class Phase3AgentCoordinator:
             normalized.append(check.__class__.model_validate(payload))
         return normalized
 
-    def _merge_validation_warnings(
-        self,
-        model_warnings: list[CriteriaValidationWarning],
-        deterministic_warnings: list[CriteriaValidationWarning],
-    ) -> list[CriteriaValidationWarning]:
+    def _merge_validation_warnings(self, *warning_groups: list[CriteriaValidationWarning]) -> list[CriteriaValidationWarning]:
         merged: list[CriteriaValidationWarning] = []
         seen: set[tuple[str, str]] = set()
-        for warning in [*model_warnings, *deterministic_warnings]:
-            key = (warning.code, warning.message)
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(warning)
+        for warnings in warning_groups:
+            for warning in warnings:
+                key = (warning.code, warning.message)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(warning)
         return merged
+
+    def _ensure_mandatory_category_coverage(
+        self,
+        context: CriteriaGenerationContext,
+        checks: list,
+    ) -> tuple[list, list[CriteriaValidationWarning]]:
+        categories_present = {self._category_value(check.category) for check in checks}
+        additions: list[ChecklistDraftItem] = []
+        warnings: list[CriteriaValidationWarning] = []
+        for category in context.review_profile.mandatory_categories:
+            if category in categories_present:
+                continue
+            additions.append(self._fallback_mandatory_criterion(category))
+            warnings.append(
+                CriteriaValidationWarning(
+                    code="mandatory_category_auto_added",
+                    message=f"Mandatory review category was deterministically added because the Criteria Agent omitted it: {category}",
+                    severity="warning",
+                )
+            )
+        return [*checks, *additions], warnings
+
+    def _fallback_mandatory_criterion(self, category: str) -> ChecklistDraftItem:
+        category_enum = ChecklistCategory(category)
+        coverage = CHECKLIST_CATEGORY_COVERAGE.get(category_enum, "baseline DPA obligations")
+        likely_document_types = self._likely_documents_for_category(category_enum)
+        return ChecklistDraftItem.model_validate(
+            {
+                "check_id": f"AUTO_{category_enum.name}",
+                "title": f"{category_enum.value} must be reviewable in the vendor materials",
+                "category": category_enum.value,
+                "legal_basis": ["GDPR Article 28", "GDPR Article 32"],
+                "required": True,
+                "severity": "MANDATORY",
+                "evidence_hint": f"Inspect the DPA and supporting materials for clauses covering {coverage}.",
+                "pass_criteria": [
+                    f"The vendor materials provide reviewable obligations covering {coverage}.",
+                    "The obligations are concrete enough for Checker to assess compliance and residual business risk.",
+                ],
+                "fail_criteria": [
+                    f"The uploaded materials omit or only vaguely address {coverage}.",
+                    "The reviewer cannot determine the vendor's obligation, process, timing, or assistance level from the available evidence.",
+                ],
+                "sources": [
+                    {
+                        "source_type": "LAW",
+                        "authority": "European Union",
+                        "source_ref": "GDPR Articles 28 and 32",
+                        "source_url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj",
+                        "source_excerpt": "Processor agreements must contain mandatory processing terms and appropriate security obligations.",
+                        "interpretation_notes": "Deterministically added to preserve complete baseline category coverage before final review.",
+                    }
+                ],
+                "draft_rationale": "The fixed review profile requires every mandatory category to be represented before the checklist can be approved.",
+                "rationale": "A missing baseline category would leave the final approval pack with an unreviewed legal or operational area.",
+                "applicability": "Applies to every standard Vendor DPA review unless the approved review profile is changed.",
+                "priority": "high",
+                "expected_evidence": [
+                    {
+                        "document_types": likely_document_types,
+                        "description": f"Clauses or supporting documentation that address {coverage}.",
+                    }
+                ],
+                "likely_document_types": likely_document_types,
+                "vendor_context_factors": self._context_factors_for_category(category_enum),
+                "profile_references": ["standard_vendor_dpa_v1"],
+            }
+        )
+
+    def _category_value(self, category: Any) -> str:
+        return category.value if hasattr(category, "value") else str(category)
+
+    def _likely_documents_for_category(self, category: ChecklistCategory) -> list[str]:
+        if category == ChecklistCategory.SECURITY_AND_CONFIDENTIALITY:
+            return ["main_dpa", "security_toms", "security_certification"]
+        if category == ChecklistCategory.SUBPROCESSORS_AND_PERSONNEL:
+            return ["main_dpa", "subprocessors"]
+        if category == ChecklistCategory.INTERNATIONAL_TRANSFERS_AND_LOCALIZATION:
+            return ["main_dpa", "data_transfer_terms"]
+        if category == ChecklistCategory.AUDIT_COMPLIANCE_AND_LIABILITY:
+            return ["main_dpa", "security_certification", "custom_agreement"]
+        return ["main_dpa"]
+
+    def _context_factors_for_category(self, category: ChecklistCategory) -> list[str]:
+        if category == ChecklistCategory.INTERNATIONAL_TRANSFERS_AND_LOCALIZATION:
+            return ["processes_eu_personal_data", "transfers_data_outside_eea", "vendor_region"]
+        if category == ChecklistCategory.SECURITY_AND_CONFIDENTIALITY:
+            return ["shares_sensitive_data", "business_criticality"]
+        if category == ChecklistCategory.SUBPROCESSORS_AND_PERSONNEL:
+            return ["shares_personal_data"]
+        if category == ChecklistCategory.DATA_SUBJECT_RIGHTS_AND_ASSISTANCE:
+            return ["processes_eu_personal_data", "shares_personal_data"]
+        return ["shares_personal_data"]
 
     def _deterministic_criteria_warnings(self, context: CriteriaGenerationContext, checks: list) -> list[CriteriaValidationWarning]:
         warnings: list[CriteriaValidationWarning] = []
-        categories_present = {check.category for check in checks}
+        categories_present = {self._category_value(check.category) for check in checks}
         for category in context.review_profile.mandatory_categories:
             if category not in categories_present:
                 warnings.append(

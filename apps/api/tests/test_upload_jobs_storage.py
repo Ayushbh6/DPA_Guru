@@ -8,11 +8,13 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
+from db.models import Project
 from dpa_checklist import ChecklistCategory, ChecklistDraftItem, ChecklistDraftMeta, ChecklistDraftOutput, ChecklistSource
 from upload_api.config import Settings
 from upload_api.events import JobEventBus
 from upload_api.jobs import UploadPipelineService, utcnow
 from upload_api.parsers import PdfInspection
+from upload_api.schemas import VendorReviewContext
 from upload_api.storage import ArtifactStore
 
 
@@ -128,6 +130,45 @@ class _ChecklistJobStub:
         self.completed_at = finished_at
         self.updated_at = finished_at
         self.created_at = finished_at
+
+
+def test_vendor_context_patch_preserves_omitted_fields(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    service = UploadPipelineService(
+        settings=settings,
+        session_factory=_SessionFactoryStub(_SessionStub()),  # type: ignore[arg-type]
+        storage=ArtifactStore(
+            primary_backend="local",
+            upload_dir=settings.upload_storage_dir,
+            parsed_dir=settings.parsed_storage_dir,
+        ),
+        event_bus=JobEventBus(),
+    )
+    project = Project(
+        vendor_name="Atlassian",
+        intended_use_case="Internal engineering collaboration",
+        data_types=["customer_personal_data"],
+        shares_personal_data=True,
+        shares_customer_data=True,
+        shares_employee_data=False,
+        shares_sensitive_data=False,
+        has_ai_features=False,
+        business_criticality="high",
+        vendor_region="US",
+        processes_eu_personal_data=True,
+        transfers_data_outside_eea=True,
+    )
+
+    service._apply_vendor_context(project, VendorReviewContext(data_types=["employee_personal_data"]))
+
+    assert project.vendor_name == "Atlassian"
+    assert project.intended_use_case == "Internal engineering collaboration"
+    assert project.shares_personal_data is True
+    assert project.shares_customer_data is True
+    assert project.business_criticality == "high"
+    assert project.vendor_region == "US"
+    assert project.data_types == ["employee_personal_data"]
+    assert project.context_completed_at is not None
 
 
 def _sample_checklist_result() -> ChecklistDraftOutput:

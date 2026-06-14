@@ -71,6 +71,10 @@ def _extract_usage(response: Any) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _response_json_schema(model: type[BaseModel]) -> dict[str, Any]:
+    return model.model_json_schema()
+
+
 @dataclass(frozen=True)
 class AgentTool:
     name: str
@@ -145,7 +149,7 @@ class AgentLoopRunner:
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             response_mime_type="application/json",
-            response_schema=self._response_model,
+            response_json_schema=_response_json_schema(self._response_model),
             temperature=0.0,
             thinking_config=types.ThinkingConfig(thinking_budget=1024),
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),

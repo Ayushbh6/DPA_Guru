@@ -10,7 +10,10 @@ import {
   hardDeleteVendorDocument,
   markVendorDocumentPrimary,
   restoreVendorDocument,
+  updateVendorReview,
+  type BusinessCriticality,
   type ProjectDocumentSummary,
+  type VendorRegion,
   type VendorDocumentType,
 } from "@/lib/uploadApi";
 import { useProject } from "../ProjectProvider";
@@ -29,6 +32,71 @@ const DOCUMENT_TYPE_OPTIONS: Array<{ value: VendorDocumentType; label: string }>
   { value: "custom_agreement", label: "Custom Agreement" },
   { value: "other", label: "Other" },
 ];
+
+const CONTEXT_REGION_OPTIONS: Array<{ value: VendorRegion; label: string }> = [
+  { value: "US", label: "United States" },
+  { value: "EU_EEA", label: "EU / EEA" },
+  { value: "UK", label: "United Kingdom" },
+  { value: "OTHER", label: "Other / global" },
+  { value: "UNKNOWN", label: "Unknown" },
+];
+
+const CONTEXT_CRITICALITY_OPTIONS: BusinessCriticality[] = ["low", "medium", "high"];
+
+type ReviewContextDraft = {
+  vendor_name: string;
+  intended_use_case: string;
+  data_types: string;
+  shares_personal_data: boolean;
+  shares_customer_data: boolean;
+  shares_employee_data: boolean;
+  shares_sensitive_data: boolean;
+  has_ai_features: boolean;
+  business_criticality: BusinessCriticality;
+  vendor_region: VendorRegion;
+  processes_eu_personal_data: boolean;
+  transfers_data_outside_eea: boolean;
+};
+
+type ReviewContextBooleanKey =
+  | "shares_personal_data"
+  | "shares_customer_data"
+  | "shares_employee_data"
+  | "shares_sensitive_data"
+  | "has_ai_features";
+
+const CONTEXT_BOOLEAN_FLAGS: Array<{ key: ReviewContextBooleanKey; label: string }> = [
+  { key: "shares_personal_data", label: "Personal data" },
+  { key: "shares_customer_data", label: "Customer" },
+  { key: "shares_employee_data", label: "Employee" },
+  { key: "shares_sensitive_data", label: "Sensitive" },
+  { key: "has_ai_features", label: "AI" },
+];
+
+function contextDraftFromDetail(detail: ReturnType<typeof useProject>["detail"]): ReviewContextDraft {
+  const context = detail?.vendor_context;
+  return {
+    vendor_name: context?.vendor_name || detail?.project.vendor_name || "",
+    intended_use_case: context?.intended_use_case || detail?.project.intended_use_case || "",
+    data_types: (context?.data_types || []).join(", "),
+    shares_personal_data: context?.shares_personal_data ?? true,
+    shares_customer_data: context?.shares_customer_data ?? false,
+    shares_employee_data: context?.shares_employee_data ?? false,
+    shares_sensitive_data: context?.shares_sensitive_data ?? false,
+    has_ai_features: context?.has_ai_features ?? false,
+    business_criticality: (context?.business_criticality || detail?.project.business_criticality || "medium") as BusinessCriticality,
+    vendor_region: (context?.vendor_region || "UNKNOWN") as VendorRegion,
+    processes_eu_personal_data: context?.processes_eu_personal_data ?? true,
+    transfers_data_outside_eea: context?.transfers_data_outside_eea ?? false,
+  };
+}
+
+function parseDataTypes(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 
 const PARSE_STAGE_LABELS: Record<string, string> = {
   UPLOADING: "Uploading",
@@ -86,6 +154,8 @@ export default function DashboardPage() {
   const [parsedText, setParsedText] = useState("");
   const [loadingParsedText, setLoadingParsedText] = useState(false);
   const [parsedTextError, setParsedTextError] = useState<string | null>(null);
+  const [contextDraft, setContextDraft] = useState<ReviewContextDraft>(() => contextDraftFromDetail(null));
+  const [savingContext, setSavingContext] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const documents = useMemo(() => {
@@ -94,6 +164,10 @@ export default function DashboardPage() {
   }, [detail?.document, detail?.documents]);
   const primaryDocument = documents.find((doc) => doc.is_primary) || detail?.document || documents[0] || null;
   const parseJob = detail?.parse_job;
+
+  useEffect(() => {
+    setContextDraft(contextDraftFromDetail(detail));
+  }, [detail?.project.project_id, detail?.vendor_context]);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,6 +207,17 @@ export default function DashboardPage() {
     if (!parsedText) return null;
     return parsedText.replace(/\s+/g, " ").trim().length;
   }, [parsedText]);
+
+  const contextDataTypes = useMemo(() => parseDataTypes(contextDraft.data_types), [contextDraft.data_types]);
+  const contextComplete = Boolean(
+    contextDraft.vendor_name.trim() &&
+      contextDraft.intended_use_case.trim() &&
+      contextDataTypes.length &&
+      contextDraft.business_criticality &&
+      contextDraft.vendor_region &&
+      contextDraft.processes_eu_personal_data !== null &&
+      contextDraft.transfers_data_outside_eea !== null,
+  );
 
   function validateFile(file: File) {
     const ext = file.name.split(".").pop()?.toLowerCase();
@@ -212,6 +297,37 @@ export default function DashboardPage() {
     }
   }
 
+  async function saveReviewContext() {
+    if (!projectId || savingContext) return;
+    setSavingContext(true);
+    setWorkspaceError(null);
+    try {
+      const dataTypes = contextDataTypes.length ? contextDataTypes : ["not_specified"];
+      await updateVendorReview(projectId, {
+        name: contextDraft.vendor_name.trim() ? `${contextDraft.vendor_name.trim()} Vendor Review` : undefined,
+        vendor_context: {
+          vendor_name: contextDraft.vendor_name.trim() || null,
+          intended_use_case: contextDraft.intended_use_case.trim() || null,
+          data_types: dataTypes,
+          shares_personal_data: contextDraft.shares_personal_data,
+          shares_customer_data: contextDraft.shares_customer_data,
+          shares_employee_data: contextDraft.shares_employee_data,
+          shares_sensitive_data: contextDraft.shares_sensitive_data,
+          has_ai_features: contextDraft.has_ai_features,
+          business_criticality: contextDraft.business_criticality,
+          vendor_region: contextDraft.vendor_region,
+          processes_eu_personal_data: contextDraft.processes_eu_personal_data,
+          transfers_data_outside_eea: contextDraft.transfers_data_outside_eea,
+        },
+      });
+      await Promise.all([refreshProject(false), refreshSidebar()]);
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : "Failed to save review context.");
+    } finally {
+      setSavingContext(false);
+    }
+  }
+
   function replacementFor(document: ProjectDocumentSummary) {
     return documents.find(
       (candidate) =>
@@ -249,6 +365,120 @@ export default function DashboardPage() {
               <div className="text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Criticality</div>
               <div className="mt-2 text-sm font-semibold capitalize" style={{ color: "var(--text)" }}>{detail?.vendor_context?.business_criticality || "Incomplete"}</div>
             </div>
+          </div>
+        </div>
+
+        <div className="mt-6 border-t pt-5" style={{ borderColor: "var(--line)" }}>
+          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>Review Context</div>
+              <div className="mt-2 text-sm" style={{ color: contextComplete ? "var(--status-compliant)" : "var(--status-partial)" }}>
+                {contextComplete ? "Complete for final review" : "Complete these fields before running final review"}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void saveReviewContext()}
+              disabled={savingContext || !contextComplete}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium transition-opacity disabled:opacity-45"
+              style={{ background: "var(--invert)", color: "var(--invert-fg)" }}
+            >
+              {savingContext ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+              Save Context
+            </button>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Vendor</span>
+              <input
+                value={contextDraft.vendor_name}
+                onChange={(event) => setContextDraft((current) => ({ ...current, vendor_name: event.target.value }))}
+                className="w-full px-3 py-2.5 text-sm outline-none"
+                style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Data types</span>
+              <input
+                value={contextDraft.data_types}
+                onChange={(event) => setContextDraft((current) => ({ ...current, data_types: event.target.value }))}
+                placeholder="customer_personal_data, employee_personal_data"
+                className="w-full px-3 py-2.5 text-sm outline-none"
+                style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
+              />
+            </label>
+          </div>
+
+          <label className="mt-3 block">
+            <span className="mb-1.5 block text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Intended use case</span>
+            <textarea
+              value={contextDraft.intended_use_case}
+              onChange={(event) => setContextDraft((current) => ({ ...current, intended_use_case: event.target.value }))}
+              rows={3}
+              className="w-full resize-none px-3 py-2.5 text-sm leading-6 outline-none"
+              style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
+            />
+          </label>
+
+          <div className="mt-3 grid gap-3 md:grid-cols-3">
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Criticality</span>
+              <select
+                value={contextDraft.business_criticality}
+                onChange={(event) => setContextDraft((current) => ({ ...current, business_criticality: event.target.value as BusinessCriticality }))}
+                className="h-10 w-full px-3 text-sm outline-none"
+                style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
+              >
+                {CONTEXT_CRITICALITY_OPTIONS.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Vendor region</span>
+              <select
+                value={contextDraft.vendor_region}
+                onChange={(event) => setContextDraft((current) => ({ ...current, vendor_region: event.target.value as VendorRegion }))}
+                className="h-10 w-full px-3 text-sm outline-none"
+                style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
+              >
+                {CONTEXT_REGION_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex items-center gap-2 border px-3 py-2 text-sm" style={{ borderColor: "var(--line)", color: "var(--text-2)" }}>
+                <input
+                  type="checkbox"
+                  checked={contextDraft.processes_eu_personal_data}
+                  onChange={(event) => setContextDraft((current) => ({ ...current, processes_eu_personal_data: event.target.checked }))}
+                />
+                EU data
+              </label>
+              <label className="flex items-center gap-2 border px-3 py-2 text-sm" style={{ borderColor: "var(--line)", color: "var(--text-2)" }}>
+                <input
+                  type="checkbox"
+                  checked={contextDraft.transfers_data_outside_eea}
+                  onChange={(event) => setContextDraft((current) => ({ ...current, transfers_data_outside_eea: event.target.checked }))}
+                />
+                EEA transfer
+              </label>
+            </div>
+          </div>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-5">
+            {CONTEXT_BOOLEAN_FLAGS.map(({ key, label }) => (
+              <label key={key} className="flex min-h-10 items-center gap-2 border px-3 py-2 text-sm" style={{ borderColor: "var(--line)", color: "var(--text-2)" }}>
+                <input
+                  type="checkbox"
+                  checked={contextDraft[key]}
+                  onChange={(event) => setContextDraft((current) => ({ ...current, [key]: event.target.checked }))}
+                />
+                <span className="leading-5">{label}</span>
+              </label>
+            ))}
           </div>
         </div>
       </section>

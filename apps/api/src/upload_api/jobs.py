@@ -22,7 +22,9 @@ from db.models import (
     AnalysisReport,
     AnalysisRun,
     AnalysisRunDocument,
+    AgentRunToolCall,
     ApprovalPack,
+    ApprovalPackRevision,
     ApprovalPackStageOutput,
     AuditEvent,
     ApprovedChecklist,
@@ -34,6 +36,8 @@ from db.models import (
     DocumentChunk,
     DocumentParseJob,
     Finding,
+    CopilotMessage,
+    CopilotThread,
     Project,
     Tenant,
 )
@@ -47,6 +51,7 @@ from upload_api.agents.schemas import (
     CriteriaDocumentInventoryItem,
     CriteriaGenerationContext,
 )
+from upload_api.agents.tools.copilot_tools import apply_approval_pack_patch
 
 from .checklist_agent import ChecklistDraftAgent
 from .checklist_synthesis import ChecklistSynthesisCanceledError
@@ -67,11 +72,15 @@ from .schemas import (
     AnalysisRunSnapshot,
     AnalysisRunSummary,
     ApprovalPackResponse,
+    ApprovalPackRevisionResponse,
     ApproveChecklistRequest,
     ApprovedChecklistResponse,
     ApprovedChecklistSummary,
     ChecklistDraftBootstrapResponse,
     ChecklistDraftSnapshot,
+    CopilotMessageResponse,
+    CopilotThreadResponse,
+    CopilotTurnResponse,
     CreateAnalysisRunRequest,
     CreateProjectResponse,
     CreateVendorReviewRequest,
@@ -4169,6 +4178,568 @@ class UploadPipelineService:
             updated_at=pack.updated_at,
             published_at=pack.published_at,
         )
+
+    def list_copilot_threads(self, project_id: uuid.UUID, *, actor_username: str) -> list[CopilotThreadResponse]:
+        with self.session_factory() as session:
+            project = self._require_owned_project(session, project_id=project_id, actor_username=actor_username)
+            rows = session.execute(
+                select(CopilotThread)
+                .where(CopilotThread.project_id == project.id, CopilotThread.status == "active")
+                .order_by(CopilotThread.updated_at.desc(), CopilotThread.created_at.desc())
+            ).scalars().all()
+            return [self._build_copilot_thread_response(row) for row in rows]
+
+    def create_copilot_thread(
+        self,
+        project_id: uuid.UUID,
+        *,
+        actor_username: str,
+        title: str | None = None,
+    ) -> CopilotThreadResponse:
+        with self.session_factory() as session:
+            project = self._require_owned_project(session, project_id=project_id, actor_username=actor_username)
+            pack = self._current_project_approval_pack(session, project)
+            now = utcnow()
+            thread = CopilotThread(
+                tenant_id=project.tenant_id,
+                project_id=project.id,
+                approval_pack_id=pack.id,
+                title=(title or "Review copilot").strip()[:255],
+                status="active",
+                created_by=actor_username,
+                updated_at=now,
+            )
+            session.add(thread)
+            project.last_activity_at = now
+            session.commit()
+            return self._build_copilot_thread_response(thread)
+
+    def list_copilot_messages(self, thread_id: uuid.UUID, *, actor_username: str) -> list[CopilotMessageResponse]:
+        with self.session_factory() as session:
+            _, thread = self._require_owned_copilot_thread(session, thread_id=thread_id, actor_username=actor_username)
+            rows = session.execute(
+                select(CopilotMessage)
+                .where(CopilotMessage.thread_id == thread.id)
+                .order_by(CopilotMessage.created_at.asc(), CopilotMessage.id.asc())
+            ).scalars().all()
+            return [self._build_copilot_message_response(row) for row in rows]
+
+    def create_copilot_message(
+        self,
+        thread_id: uuid.UUID,
+        *,
+        content: str,
+        actor_username: str,
+    ) -> CopilotTurnResponse:
+        content = content.strip()
+        if not content:
+            raise HTTPException(status_code=400, detail="Message content is required.")
+        with self.session_factory() as session:
+            project, thread = self._require_owned_copilot_thread(session, thread_id=thread_id, actor_username=actor_username)
+            pack = self._current_project_approval_pack(session, project)
+            user_message = CopilotMessage(
+                tenant_id=project.tenant_id,
+                project_id=project.id,
+                thread_id=thread.id,
+                role="user",
+                content=content,
+                status="completed",
+            )
+            session.add(user_message)
+            if thread.title in {None, "", "Review copilot"}:
+                thread.title = content[:80]
+            now = utcnow()
+            thread.updated_at = now
+            project.last_activity_at = now
+            session.commit()
+            user_response = self._build_copilot_message_response(user_message)
+
+        record = self._build_copilot_agent_record(
+            thread_id=thread_id,
+            actor_username=actor_username,
+            exclude_message_id=user_response.message_id,
+        )
+        scope = AgentRunScope(
+            tenant_id=record["tenant_id"],
+            project_id=record["project_id"],
+            analysis_run_id=record["analysis_run_id"],
+            approval_pack_id=record["approval_pack_id"],
+            copilot_thread_id=thread_id,
+        )
+        agent_run_id, output = self.phase3_agents.run_copilot(
+            scope=scope,
+            vendor_context=record["vendor_context"],
+            approval_pack=record["approval_pack"],
+            findings=record["findings"],
+            stage_outputs=record["stage_outputs"],
+            prior_revisions=record["prior_revisions"],
+            document_records=record["document_records"],
+            pages_by_document=record["pages_by_document"],
+            selected_kb_source_ids=record["selected_source_ids"],
+            user_message=content,
+            history_messages=record["history_messages"],
+        )
+        revision_response: ApprovalPackRevisionResponse | None = None
+        content_json = {
+            "citations": [item.model_dump(mode="json") for item in output.citations],
+            "suggested_questions": list(output.suggested_questions),
+            "tool_calls": self._agent_tool_call_summaries(uuid.UUID(agent_run_id)),
+        }
+        if output.revision is not None:
+            revision_response = self._persist_copilot_revision(
+                approval_pack_id=record["approval_pack_id"],
+                actor_username=actor_username,
+                reason=output.revision.reason,
+                changes_summary=output.revision.changes_summary,
+                patch_json=output.revision.patch,
+                preview_pack=output.revision.preview_pack,
+            )
+            content_json["revision"] = revision_response.model_dump(mode="json")
+
+        with self.session_factory() as session:
+            project, thread = self._require_owned_copilot_thread(session, thread_id=thread_id, actor_username=actor_username)
+            assistant_message = CopilotMessage(
+                tenant_id=project.tenant_id,
+                project_id=project.id,
+                thread_id=thread.id,
+                role="assistant",
+                content=output.answer,
+                content_json=content_json,
+                model_version=record["model_name"],
+                agent_run_id=uuid.UUID(agent_run_id),
+                status="completed",
+            )
+            session.add(assistant_message)
+            now = utcnow()
+            thread.updated_at = now
+            project.last_activity_at = now
+            session.commit()
+            assistant_response = self._build_copilot_message_response(assistant_message)
+
+        return CopilotTurnResponse(
+            user_message=user_response,
+            assistant_message=assistant_response,
+            revision=revision_response,
+        )
+
+    def apply_approval_pack_revision(
+        self,
+        revision_id: uuid.UUID,
+        *,
+        actor_username: str,
+    ) -> ApprovalPackRevisionResponse:
+        with self.session_factory() as session:
+            project, revision = self._require_owned_approval_pack_revision(
+                session,
+                revision_id=revision_id,
+                actor_username=actor_username,
+            )
+            if revision.status != "proposed":
+                raise HTTPException(status_code=409, detail="Only proposed revisions can be applied.")
+            pack = session.get(ApprovalPack, revision.approval_pack_id)
+            if pack is None:
+                raise HTTPException(status_code=404, detail="Approval Pack not found.")
+            new_pack = revision.new_pack_json or apply_approval_pack_patch(pack.pack_json, revision.patch_json)
+            now = utcnow()
+            pack.pack_json = new_pack
+            pack.recommendation_summary = str(new_pack.get("recommendation_summary") or pack.recommendation_summary)
+            pack.updated_at = now
+            revision.new_pack_json = new_pack
+            revision.status = "applied"
+            revision.applied_at = now
+            project.last_activity_at = now
+            self._sync_revision_status_in_copilot_messages(session, revision)
+            self._record_audit_event(
+                session,
+                tenant_id=project.tenant_id,
+                event_name="approval_pack_revision_applied",
+                resource_type="approval_pack_revision",
+                resource_id=str(revision.id),
+                trace_id=str(revision.id),
+                metadata_json={"project_id": str(project.id), "approval_pack_id": str(pack.id)},
+            )
+            session.commit()
+            return self._build_approval_pack_revision_response(revision)
+
+    def reject_approval_pack_revision(
+        self,
+        revision_id: uuid.UUID,
+        *,
+        actor_username: str,
+    ) -> ApprovalPackRevisionResponse:
+        with self.session_factory() as session:
+            project, revision = self._require_owned_approval_pack_revision(
+                session,
+                revision_id=revision_id,
+                actor_username=actor_username,
+            )
+            if revision.status != "proposed":
+                raise HTTPException(status_code=409, detail="Only proposed revisions can be rejected.")
+            revision.status = "rejected"
+            revision.rejected_at = utcnow()
+            project.last_activity_at = utcnow()
+            self._sync_revision_status_in_copilot_messages(session, revision)
+            session.commit()
+            return self._build_approval_pack_revision_response(revision)
+
+    def assert_copilot_thread_access(self, thread_id: uuid.UUID, *, actor_username: str) -> None:
+        with self.session_factory() as session:
+            self._require_owned_copilot_thread(session, thread_id=thread_id, actor_username=actor_username)
+
+    def _build_copilot_thread_response(self, thread: CopilotThread) -> CopilotThreadResponse:
+        return CopilotThreadResponse(
+            thread_id=thread.id,
+            vendor_review_id=thread.project_id,
+            project_id=thread.project_id,
+            approval_pack_id=thread.approval_pack_id,
+            title=thread.title,
+            status=thread.status,
+            created_by=thread.created_by,
+            created_at=thread.created_at,
+            updated_at=thread.updated_at,
+        )
+
+    def _build_copilot_message_response(self, message: CopilotMessage) -> CopilotMessageResponse:
+        content_json = message.content_json if isinstance(message.content_json, dict) else {}
+        revision = content_json.get("revision")
+        revisions = []
+        if isinstance(revision, dict):
+            try:
+                revisions.append(ApprovalPackRevisionResponse.model_validate(revision))
+            except ValidationError:
+                revisions = []
+        citations = content_json.get("citations") if isinstance(content_json.get("citations"), list) else []
+        tool_calls = content_json.get("tool_calls") if isinstance(content_json.get("tool_calls"), list) else []
+        return CopilotMessageResponse(
+            message_id=message.id,
+            thread_id=message.thread_id,
+            vendor_review_id=message.project_id,
+            project_id=message.project_id,
+            role=message.role,
+            content=message.content,
+            content_json=message.content_json,
+            model_version=message.model_version,
+            agent_run_id=message.agent_run_id,
+            status=message.status,
+            created_at=message.created_at,
+            citations=citations,
+            sources=citations,
+            tool_activities=tool_calls,
+            revisions=revisions,
+            meta={
+                "suggested_questions": content_json.get("suggested_questions", []),
+            } if content_json else None,
+        )
+
+    def _build_approval_pack_revision_response(self, revision: ApprovalPackRevision) -> ApprovalPackRevisionResponse:
+        return ApprovalPackRevisionResponse(
+            revision_id=revision.id,
+            vendor_review_id=revision.project_id,
+            project_id=revision.project_id,
+            approval_pack_id=revision.approval_pack_id,
+            created_by_type=revision.created_by_type,
+            created_by=revision.created_by,
+            summary=revision.changes_summary,
+            reason=revision.reason,
+            changes_summary=revision.changes_summary,
+            patch=revision.patch_json,
+            previous_pack=revision.previous_pack_json,
+            new_pack=revision.new_pack_json,
+            status=revision.status,
+            created_at=revision.created_at,
+            applied_at=revision.applied_at,
+            rejected_at=revision.rejected_at,
+        )
+
+    def _current_project_approval_pack(self, session: Session, project: Project) -> ApprovalPack:
+        pack = None
+        if project.current_approval_pack_id is not None:
+            pack = session.get(ApprovalPack, project.current_approval_pack_id)
+        if pack is None:
+            pack = session.execute(
+                select(ApprovalPack)
+                .where(ApprovalPack.project_id == project.id, ApprovalPack.status == "published")
+                .order_by(ApprovalPack.created_at.desc())
+            ).scalars().first()
+        if pack is None:
+            raise HTTPException(status_code=409, detail="Generate an Approval Pack before starting the copilot.")
+        return pack
+
+    def _require_owned_copilot_thread(
+        self,
+        session: Session,
+        *,
+        thread_id: uuid.UUID,
+        actor_username: str,
+    ) -> tuple[Project, CopilotThread]:
+        row = session.execute(
+            select(Project, CopilotThread)
+            .join(CopilotThread, CopilotThread.project_id == Project.id)
+            .where(CopilotThread.id == thread_id, Project.owner_username == actor_username, Project.status != "DELETED")
+        ).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Copilot thread not found.")
+        return row
+
+    def _require_owned_approval_pack_revision(
+        self,
+        session: Session,
+        *,
+        revision_id: uuid.UUID,
+        actor_username: str,
+    ) -> tuple[Project, ApprovalPackRevision]:
+        row = session.execute(
+            select(Project, ApprovalPackRevision)
+            .join(ApprovalPackRevision, ApprovalPackRevision.project_id == Project.id)
+            .where(ApprovalPackRevision.id == revision_id, Project.owner_username == actor_username, Project.status != "DELETED")
+        ).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Approval Pack revision not found.")
+        return row
+
+    def _build_copilot_agent_record(
+        self,
+        *,
+        thread_id: uuid.UUID,
+        actor_username: str,
+        exclude_message_id: uuid.UUID | None = None,
+    ) -> dict[str, Any]:
+        with self.session_factory() as session:
+            project, thread = self._require_owned_copilot_thread(session, thread_id=thread_id, actor_username=actor_username)
+            pack = self._current_project_approval_pack(session, project)
+            approved = session.get(ApprovedChecklist, pack.approved_checklist_id) if pack.approved_checklist_id else None
+            selected_source_ids = list(approved.selected_source_ids if approved is not None else [])
+            analysis_run = session.get(AnalysisRun, pack.analysis_run_id) if pack.analysis_run_id else None
+
+            document_ids: list[uuid.UUID] = []
+            if analysis_run is not None:
+                for value in analysis_run.input_document_ids or []:
+                    try:
+                        doc_id = uuid.UUID(str(value))
+                    except (TypeError, ValueError):
+                        continue
+                    if doc_id not in document_ids:
+                        document_ids.append(doc_id)
+                if analysis_run.document_id not in document_ids:
+                    document_ids.insert(0, analysis_run.document_id)
+            if not document_ids:
+                document_ids = [doc.id for doc in self._active_documents_for_project(session, project.id)]
+
+            documents = session.execute(
+                select(Document)
+                .where(Document.id.in_(document_ids))
+                .order_by(Document.sort_order.asc(), Document.uploaded_at.asc())
+            ).scalars().all() if document_ids else []
+            document_by_id = {document.id: document for document in documents}
+            ordered_documents = [document_by_id[document_id] for document_id in document_ids if document_id in document_by_id]
+            pages_by_document: dict[str, list[DpaPageRecord]] = {}
+            document_records: list[DocumentRecord] = []
+            for document in ordered_documents:
+                parse_job = self._latest_parse_job_for_document(session, document.id)
+                parsed_pages_uri = (
+                    parse_job.meta_json.get("parsed_pages_uri")
+                    if parse_job is not None and isinstance(parse_job.meta_json, dict)
+                    else None
+                )
+                pages_by_document[str(document.id)] = self._load_dpa_pages(document.extracted_text_uri or "", parsed_pages_uri)
+                document_records.append(
+                    DocumentRecord(
+                        document_id=str(document.id),
+                        document_name=document.display_name or document.filename,
+                        document_type=document.document_type,
+                        is_primary=bool(document.is_primary),
+                    )
+                )
+
+            findings = []
+            if pack.analysis_run_id is not None:
+                finding_rows = session.execute(
+                    select(Finding)
+                    .where(Finding.run_id == pack.analysis_run_id)
+                    .order_by(Finding.check_id.asc())
+                ).scalars().all()
+                findings = [
+                    {
+                        "check_id": row.check_id,
+                        "category": row.category,
+                        "status": row.status,
+                        "risk": row.risk,
+                        "confidence": row.confidence,
+                        "risk_rationale": row.risk_rationale,
+                        "review_required": row.review_required,
+                        "assessment": row.assessment_json,
+                        "evidence": row.evidence_json,
+                    }
+                    for row in finding_rows
+                ]
+
+            stage_outputs = [
+                {
+                    "stage_name": row.stage_name,
+                    "stage_version": row.stage_version,
+                    "status": row.status,
+                    "output": row.output_json,
+                }
+                for row in session.execute(
+                    select(ApprovalPackStageOutput)
+                    .where(ApprovalPackStageOutput.approval_pack_id == pack.id)
+                    .order_by(ApprovalPackStageOutput.created_at.asc())
+                ).scalars().all()
+            ]
+            prior_revisions = [
+                self._build_approval_pack_revision_response(row).model_dump(mode="json")
+                for row in session.execute(
+                    select(ApprovalPackRevision)
+                    .where(ApprovalPackRevision.approval_pack_id == pack.id)
+                    .order_by(ApprovalPackRevision.created_at.desc())
+                    .limit(10)
+                ).scalars().all()
+            ]
+            history_query = (
+                select(CopilotMessage)
+                .where(CopilotMessage.thread_id == thread.id)
+                .order_by(CopilotMessage.created_at.asc(), CopilotMessage.id.asc())
+            )
+            if exclude_message_id is not None:
+                history_query = history_query.where(CopilotMessage.id != exclude_message_id)
+            history_rows = session.execute(history_query).scalars().all()
+            history_messages = [
+                {"role": row.role, "content": row.content}
+                for row in history_rows
+                if row.role in {"user", "assistant"}
+            ]
+            history_messages = self._prune_copilot_history_messages(history_messages)
+
+            vendor_context = self._vendor_context_response(project).model_dump(mode="json")
+            return {
+                "tenant_id": project.tenant_id,
+                "project_id": project.id,
+                "analysis_run_id": pack.analysis_run_id,
+                "approval_pack_id": pack.id,
+                "model_name": self.settings.gemini_approval_pack_model or self.settings.gemini_review_model,
+                "vendor_context": vendor_context,
+                "approval_pack": dict(pack.pack_json),
+                "findings": findings,
+                "stage_outputs": stage_outputs,
+                "prior_revisions": prior_revisions,
+                "document_records": document_records,
+                "pages_by_document": pages_by_document,
+                "selected_source_ids": selected_source_ids,
+                "history_messages": history_messages,
+            }
+
+    def _prune_copilot_history_messages(self, history_messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        target_tokens = 150_000
+        if not history_messages:
+            return []
+
+        def token_count(messages: list[dict[str, str]]) -> int:
+            text = "\n\n".join(f"{message.get('role', '')}: {message.get('content', '')}" for message in messages)
+            return estimate_token_count(text, self.settings.tokenizer_encoding)
+
+        pruned = list(history_messages)
+        while len(pruned) > 2 and token_count(pruned) > target_tokens:
+            # Drop oldest Q/A pairs from prompt assembly only; persisted chat history remains intact.
+            drop_count = 2 if len(pruned) > 3 else 1
+            pruned = pruned[drop_count:]
+        return pruned
+
+    def _persist_copilot_revision(
+        self,
+        *,
+        approval_pack_id: uuid.UUID,
+        actor_username: str,
+        reason: str,
+        changes_summary: str,
+        patch_json: dict[str, Any],
+        preview_pack: dict[str, Any] | None = None,
+    ) -> ApprovalPackRevisionResponse:
+        with self.session_factory() as session:
+            pack = session.get(ApprovalPack, approval_pack_id)
+            if pack is None:
+                raise HTTPException(status_code=404, detail="Approval Pack not found.")
+            project = session.get(Project, pack.project_id)
+            if project is None or project.owner_username != actor_username or project.status == "DELETED":
+                raise HTTPException(status_code=404, detail="Approval Pack not found.")
+            new_pack = preview_pack or apply_approval_pack_patch(pack.pack_json, patch_json)
+            revision = ApprovalPackRevision(
+                tenant_id=project.tenant_id,
+                project_id=project.id,
+                approval_pack_id=pack.id,
+                created_by_type="copilot",
+                created_by=actor_username,
+                reason=reason,
+                changes_summary=changes_summary,
+                patch_json=patch_json,
+                previous_pack_json=pack.pack_json,
+                new_pack_json=new_pack,
+                status="proposed",
+            )
+            session.add(revision)
+            project.last_activity_at = utcnow()
+            session.commit()
+            return self._build_approval_pack_revision_response(revision)
+
+    def _sync_revision_status_in_copilot_messages(self, session: Session, revision: ApprovalPackRevision) -> None:
+        revision_payload = self._build_approval_pack_revision_response(revision).model_dump(mode="json")
+        rows = session.execute(
+            select(CopilotMessage)
+            .where(CopilotMessage.project_id == revision.project_id)
+            .where(CopilotMessage.content_json.is_not(None))
+        ).scalars().all()
+        for message in rows:
+            content_json = dict(message.content_json or {})
+            current = content_json.get("revision")
+            if not isinstance(current, dict) or str(current.get("revision_id")) != str(revision.id):
+                continue
+            content_json["revision"] = revision_payload
+            message.content_json = content_json
+
+    def _agent_tool_call_summaries(self, agent_run_id: uuid.UUID) -> list[dict[str, Any]]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(AgentRunToolCall)
+                .where(AgentRunToolCall.agent_run_id == agent_run_id)
+                .order_by(AgentRunToolCall.sequence_no.asc())
+            ).scalars().all()
+            return [
+                {
+                    "activity_id": str(row.id),
+                    "label": self._tool_activity_label(row.tool_name),
+                    "status": row.status,
+                    "detail": self._tool_activity_detail(row),
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in rows
+            ]
+
+    def _tool_activity_label(self, tool_name: str) -> str:
+        labels = {
+            "get_vendor_context": "Read vendor context",
+            "get_current_approval_pack": "Read current Approval Pack",
+            "get_review_findings": "Read review findings",
+            "get_stage_outputs": "Read stage outputs",
+            "list_prior_revisions": "Checked prior revisions",
+            "search_uploaded_documents": "Searched uploaded documents",
+            "fetch_document_pages": "Read document pages",
+            "search_kb": "Searched KB sources",
+            "fetch_kb_context": "Read KB context",
+            "preview_approval_pack_patch": "Previewed Approval Pack edit",
+        }
+        return labels.get(tool_name, tool_name.replace("_", " ").title())
+
+    def _tool_activity_detail(self, row: AgentRunToolCall) -> str | None:
+        if row.error_message:
+            return row.error_message
+        if isinstance(row.input_json, dict) and row.input_json:
+            query = row.input_json.get("query")
+            if isinstance(query, str):
+                return query[:240]
+            path_rows = row.input_json.get("set")
+            if isinstance(path_rows, list):
+                paths = [str(item.get("path")) for item in path_rows if isinstance(item, dict) and item.get("path")]
+                return ", ".join(paths[:5]) if paths else None
+        return None
 
     def assert_analysis_run_access(self, run_id: uuid.UUID, *, actor_username: str) -> None:
         with self.session_factory() as session:

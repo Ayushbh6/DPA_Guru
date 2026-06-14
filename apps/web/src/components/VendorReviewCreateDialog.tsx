@@ -175,7 +175,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
               role="dialog"
               aria-modal="true"
               aria-labelledby="vendor-review-create-title"
-              className="grid max-h-[92vh] w-full max-w-5xl overflow-hidden text-left shadow-2xl lg:grid-cols-[0.82fr_1.18fr]"
+              className="premium-panel grid max-h-[92vh] w-full max-w-5xl overflow-hidden text-left lg:grid-cols-[0.82fr_1.18fr]"
               style={{ background: "var(--bg)", border: "1px solid var(--line)" }}
               onClick={(event) => event.stopPropagation()}
             >
@@ -185,7 +185,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
               >
                 <div>
                   <div
-                    className="mb-8 inline-flex h-11 w-11 items-center justify-center border"
+                    className="mb-8 inline-flex h-11 w-11 items-center justify-center rounded-2xl border"
                     style={{ borderColor: "var(--line)", background: "var(--bg)" }}
                   >
                     <ShieldCheck className="h-5 w-5" style={{ color: "var(--accent)" }} />
@@ -198,15 +198,15 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                   </h2>
                 </div>
 
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3 border px-4 py-3" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
+                <div className="grid gap-3">
+                  <div className="flex items-start gap-3 rounded-2xl border px-4 py-3" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
                     <BriefcaseBusiness className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--text-3)" }} />
                     <div>
                       <div className="text-sm font-medium" style={{ color: "var(--text)" }}>Vendor context</div>
                       <div className="mt-1 text-xs leading-5" style={{ color: "var(--text-3)" }}>Name, use case, data profile, criticality.</div>
                     </div>
                   </div>
-                  <div className="flex items-start gap-3 border px-4 py-3" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
+                  <div className="flex items-start gap-3 rounded-2xl border px-4 py-3" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
                     <Sparkles className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--text-3)" }} />
                     <div>
                       <div className="text-sm font-medium" style={{ color: "var(--text)" }}>Workspace ready</div>
@@ -227,7 +227,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                   <button
                     type="button"
                     onClick={close}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center transition-colors"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-colors hover:bg-muted"
                     style={{ color: "var(--text-3)" }}
                     aria-label="Close"
                   >
@@ -239,7 +239,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                   <button
                     type="button"
                     onClick={close}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center transition-colors"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-colors hover:bg-muted"
                     style={{ color: "var(--text-3)" }}
                     aria-label="Close"
                   >
@@ -257,7 +257,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                       value={vendorName}
                       onChange={(event) => setVendorName(event.target.value)}
                       placeholder="ITG"
-                      className="w-full px-4 py-3.5 text-base outline-none transition-colors"
+                      className="premium-focus w-full rounded-2xl px-4 py-3.5 text-base outline-none transition-colors"
                       style={{ background: "var(--bg-1)", border: "1px solid var(--line)", color: "var(--text)" }}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" && canCreate) void handleCreate();
@@ -274,7 +274,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                       onChange={(event) => setIntendedUseCase(event.target.value)}
                       placeholder="AI chatbot for customer support"
                       rows={4}
-                      className="w-full resize-none px-4 py-3.5 text-base leading-7 outline-none transition-colors"
+                      className="premium-focus w-full resize-none rounded-2xl px-4 py-3.5 text-base leading-7 outline-none transition-colors"
                       style={{ background: "var(--bg-1)", border: "1px solid var(--line)", color: "var(--text)" }}
                     />
                   </label>
@@ -284,7 +284,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                       <div className="mb-2 text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
                         Personal data
                       </div>
-                      <div className="grid grid-cols-2 border" style={{ borderColor: "var(--line)" }}>
+                      <div className="grid grid-cols-2 overflow-hidden rounded-2xl border" style={{ borderColor: "var(--line)" }}>
                         {[true, false].map((value) => {
                           const selected = sharesPersonalData === value;
                           return (
@@ -319,7 +319,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                               key={option.value}
                               type="button"
                               onClick={() => setBusinessCriticality(option.value)}
-                              className="border px-3 py-3 text-left transition-colors"
+                              className="rounded-2xl border px-3 py-3 text-left transition-colors"
                               style={{
                                 borderColor: selected ? "var(--accent)" : "var(--line)",
                                 background: selected ? "var(--bg-2)" : "var(--bg-1)",
@@ -352,7 +352,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                               type="button"
                               disabled={!sharesPersonalData}
                               onClick={() => toggleDataType(option.value)}
-                              className="inline-flex min-h-11 items-center justify-center gap-2 border px-3 py-2 text-sm transition-colors disabled:opacity-45"
+                              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-sm transition-colors disabled:opacity-45"
                               style={{
                                 borderColor: selected ? "var(--accent)" : "var(--line)",
                                 background: selected ? "var(--bg-2)" : "var(--bg-1)",
@@ -376,7 +376,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                         <select
                           value={vendorRegion}
                           onChange={(event) => setVendorRegion(event.target.value as VendorRegion)}
-                          className="h-11 w-full appearance-none px-9 text-sm outline-none"
+                          className="premium-focus h-11 w-full appearance-none rounded-2xl px-9 text-sm outline-none"
                           style={{ background: "var(--bg-1)", border: "1px solid var(--line)", color: "var(--text)" }}
                         >
                           {REGION_OPTIONS.map((option) => (
@@ -392,7 +392,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                       <div className="mb-2 text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
                         EU personal data
                       </div>
-                      <div className="grid grid-cols-2 border" style={{ borderColor: "var(--line)" }}>
+                      <div className="grid grid-cols-2 overflow-hidden rounded-2xl border" style={{ borderColor: "var(--line)" }}>
                         {[true, false].map((value) => {
                           const selected = processesEuPersonalData === value;
                           return (
@@ -418,7 +418,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                       <div className="mb-2 text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
                         EEA transfer
                       </div>
-                      <div className="grid grid-cols-2 border" style={{ borderColor: "var(--line)" }}>
+                      <div className="grid grid-cols-2 overflow-hidden rounded-2xl border" style={{ borderColor: "var(--line)" }}>
                         {[true, false].map((value) => {
                           const selected = transfersDataOutsideEea === value;
                           return (
@@ -440,7 +440,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                       </div>
                     </div>
 
-                    <label className="flex min-h-[68px] items-center gap-3 border px-4 py-3 text-sm" style={{ borderColor: "var(--line)", background: "var(--bg-1)", color: "var(--text-2)" }}>
+                    <label className="flex min-h-[68px] items-center gap-3 rounded-2xl border px-4 py-3 text-sm" style={{ borderColor: "var(--line)", background: "var(--bg-1)", color: "var(--text-2)" }}>
                       <input
                         type="checkbox"
                         checked={hasAiFeatures}
@@ -451,7 +451,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                   </div>
 
                   {error ? (
-                    <div className="border px-4 py-3 text-sm" style={{ borderColor: "rgba(248,113,113,0.35)", color: "var(--danger)" }}>
+                    <div className="rounded-2xl border px-4 py-3 text-sm" style={{ borderColor: "rgba(248,113,113,0.35)", color: "var(--danger)" }}>
                       {error}
                     </div>
                   ) : null}
@@ -461,7 +461,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                       type="button"
                       onClick={close}
                       disabled={creating}
-                      className="px-5 py-3 text-sm transition-colors"
+                      className="rounded-2xl px-5 py-3 text-sm transition-colors hover:bg-muted"
                       style={{ color: "var(--text-2)" }}
                     >
                       Cancel
@@ -470,7 +470,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                       type="button"
                       onClick={() => void handleCreate()}
                       disabled={creating || !canCreate}
-                      className="inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium transition-opacity hover:opacity-85 disabled:opacity-40"
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl px-6 py-3 text-sm font-medium transition-opacity hover:opacity-85 disabled:opacity-40"
                       style={{ background: "var(--invert)", color: "var(--invert-fg)" }}
                     >
                       {creating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <BriefcaseBusiness className="h-4 w-4" />}

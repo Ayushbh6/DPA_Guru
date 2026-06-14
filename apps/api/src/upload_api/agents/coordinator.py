@@ -22,17 +22,18 @@ from upload_api.kb_retrieval import KbVectorRetriever
 from .base import AgentLoopRunner
 from .execution import CriteriaResearchExecutor, build_criteria_research_executor
 from .helpers import DocumentCorpus, DocumentRecord, load_kb_sources
-from .registry import approval_pack_prompt_spec, criteria_prompt_spec, criteria_research_prompt_spec, review_prompt_spec
+from .registry import approval_pack_prompt_spec, copilot_prompt_spec, criteria_prompt_spec, criteria_research_prompt_spec, review_prompt_spec
 from .schemas import (
     AgentRunScope,
     ApprovalPackAgentInput,
     ApprovalPackAgentOutput,
+    CopilotAgentOutput,
     CriteriaAgentModelOutput,
     CriteriaGenerationContext,
     CriteriaResearchPayload,
     StartCriteriaResearchInput,
 )
-from .tools import ApprovalPackToolset, CriteriaAgentToolset, ReviewAgentToolset
+from .tools import ApprovalPackToolset, CopilotToolset, CriteriaAgentToolset, ReviewAgentToolset
 
 
 def build_standard_review_profile() -> ReviewProfile:
@@ -328,6 +329,69 @@ class Phase3AgentCoordinator:
             ).as_tools(),
             task_input=task_input,
             user_message=user_message,
+            cancel_check=cancel_check,
+        )
+        result = runner.run()
+        return result.agent_run_id, result.output
+
+    def run_copilot(
+        self,
+        *,
+        scope: AgentRunScope,
+        vendor_context: dict[str, Any],
+        approval_pack: dict[str, Any],
+        findings: list[dict[str, Any]],
+        stage_outputs: list[dict[str, Any]],
+        prior_revisions: list[dict[str, Any]],
+        document_records: list[DocumentRecord],
+        pages_by_document: dict[str, list[DpaPageRecord]],
+        selected_kb_source_ids: list[str],
+        user_message: str,
+        history_messages: list[dict[str, str]],
+        cancel_check=None,
+    ) -> tuple[str, CopilotAgentOutput]:
+        if not self._settings.gemini_api_key:
+            raise RuntimeError("GEMINI_API_KEY is required for review copilot.")
+
+        corpus = DocumentCorpus(
+            document_retriever=self._document_retriever,
+            document_records=document_records,
+            pages_by_document=pages_by_document,
+        )
+        kb_sources = load_kb_sources(self._settings, selected_kb_source_ids)
+        task_input = {
+            "vendor_context": vendor_context,
+            "approval_pack_id": str(scope.approval_pack_id) if scope.approval_pack_id else None,
+            "copilot_thread_id": str(scope.copilot_thread_id) if scope.copilot_thread_id else None,
+            "document_records": corpus.list_records(),
+            "selected_kb_source_ids": selected_kb_source_ids,
+        }
+        prompt_message = (
+            "Answer the user's Vendor Review copilot request.\n"
+            f"Current user message:\n{user_message}\n\n"
+            f"Task input JSON:\n{json.dumps(task_input, indent=2)}"
+        )
+        spec = copilot_prompt_spec(self._settings)
+        runner = AgentLoopRunner(
+            api_key=self._settings.gemini_api_key,
+            session_factory=self._session_factory,
+            scope=scope,
+            prompt_path=spec.prompt_path,
+            loop_config=spec.loop_config,
+            response_model=CopilotAgentOutput,
+            tools=CopilotToolset(
+                vendor_context=vendor_context,
+                approval_pack=approval_pack,
+                findings=findings,
+                stage_outputs=stage_outputs,
+                prior_revisions=prior_revisions,
+                corpus=corpus,
+                kb_sources=kb_sources,
+                kb_retriever=self._kb_retriever,
+            ).as_tools(),
+            task_input=task_input | {"user_message": user_message},
+            user_message=prompt_message,
+            history_messages=history_messages,
             cancel_check=cancel_check,
         )
         result = runner.run()

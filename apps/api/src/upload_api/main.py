@@ -21,7 +21,9 @@ from .schemas import (
     ApproveChecklistRequest,
     AuthUserResponse,
     ChecklistDraftRequest,
+    CopilotMessageRequest,
     CreateAnalysisRunRequest,
+    CreateCopilotThreadRequest,
     CreateProjectRequest,
     CreateVendorReviewRequest,
     LoginRequest,
@@ -575,6 +577,90 @@ def create_app() -> FastAPI:
     async def get_review_run_approval_pack(run_id: uuid.UUID, request: Request):
         actor = require_actor(request)
         return await asyncio.to_thread(service.get_approval_pack, run_id, actor_username=actor.username)
+
+    @app.get("/v1/vendor-reviews/{review_id}/copilot/threads")
+    async def list_copilot_threads(review_id: uuid.UUID, request: Request):
+        actor = require_actor(request)
+        return await asyncio.to_thread(service.list_copilot_threads, review_id, actor_username=actor.username)
+
+    @app.post("/v1/vendor-reviews/{review_id}/copilot/threads")
+    async def create_copilot_thread(review_id: uuid.UUID, request: Request, payload: CreateCopilotThreadRequest | None = None):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        return await asyncio.to_thread(
+            service.create_copilot_thread,
+            review_id,
+            actor_username=actor.username,
+            title=payload.title if payload else None,
+        )
+
+    @app.get("/v1/copilot-threads/{thread_id}/messages")
+    async def list_copilot_messages(thread_id: uuid.UUID, request: Request):
+        actor = require_actor(request)
+        return await asyncio.to_thread(service.list_copilot_messages, thread_id, actor_username=actor.username)
+
+    @app.post("/v1/copilot-threads/{thread_id}/messages")
+    async def create_copilot_message(thread_id: uuid.UUID, payload: CopilotMessageRequest, request: Request):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        turn = await asyncio.to_thread(
+            service.create_copilot_message,
+            thread_id,
+            content=payload.content,
+            actor_username=actor.username,
+        )
+        await event_bus.publish(
+            thread_id,
+            {
+                "type": "message",
+                "event": "message.completed",
+                "thread_id": str(thread_id),
+                "message": turn.assistant_message.model_dump(mode="json"),
+                "revision": turn.revision.model_dump(mode="json") if turn.revision else None,
+            },
+        )
+        return turn
+
+    @app.post("/v1/approval-pack-revisions/{revision_id}/apply")
+    async def apply_approval_pack_revision(revision_id: uuid.UUID, request: Request):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        return await asyncio.to_thread(service.apply_approval_pack_revision, revision_id, actor_username=actor.username)
+
+    @app.post("/v1/approval-pack-revisions/{revision_id}/reject")
+    async def reject_approval_pack_revision(revision_id: uuid.UUID, request: Request):
+        auth_manager.require_request_origin(request)
+        actor = require_actor(request)
+        return await asyncio.to_thread(service.reject_approval_pack_revision, revision_id, actor_username=actor.username)
+
+    @app.websocket("/v1/copilot-threads/{thread_id}/events")
+    async def copilot_thread_events(websocket: WebSocket, thread_id: uuid.UUID) -> None:
+        try:
+            auth_manager.require_websocket_origin(websocket)
+            actor = auth_manager.get_required_actor_from_websocket(websocket)
+            await asyncio.to_thread(service.assert_copilot_thread_access, thread_id, actor_username=actor.username)
+        except HTTPException as exc:
+            await reject_websocket(websocket, 4401 if exc.status_code == 401 else 4403 if exc.status_code == 403 else 4404)
+            return
+
+        await event_bus.connect(thread_id, websocket)
+        try:
+            messages = await asyncio.to_thread(service.list_copilot_messages, thread_id, actor_username=actor.username)
+            for message in messages:
+                await websocket.send_json(
+                    {
+                        "type": "message",
+                        "event": "message.replay",
+                        "thread_id": str(thread_id),
+                        "message": message.model_dump(mode="json"),
+                    }
+                )
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await event_bus.disconnect(thread_id, websocket)
 
     @app.post("/v1/projects")
     async def create_project(request: Request, payload: CreateProjectRequest | None = None):

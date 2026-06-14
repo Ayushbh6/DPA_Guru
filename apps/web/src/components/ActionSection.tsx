@@ -3,12 +3,23 @@
 import Link from "next/link";
 import { startTransition, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUpRight, LoaderCircle, Plus, Search, X } from "lucide-react";
-import { AnimatePresence, motion } from "framer-motion";
+import { ArrowUpRight, FileText, LoaderCircle, Plus, Search, ShieldCheck } from "lucide-react";
 
-import { listVendorReviews, type ProjectSummary } from "@/lib/uploadApi";
-import { useAuth } from "@/components/AuthProvider";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import VendorReviewCreateDialog from "@/components/VendorReviewCreateDialog";
+import { useAuth } from "@/components/AuthProvider";
+import { listVendorReviews, type ProjectSummary } from "@/lib/uploadApi";
 
 function formatRelativeDate(value: string) {
   const date = new Date(value);
@@ -36,7 +47,7 @@ export default function ActionSection() {
 
   useEffect(() => {
     if (modalOpen) {
-      const timer = setTimeout(() => searchRef.current?.focus(), 50);
+      const timer = setTimeout(() => searchRef.current?.focus(), 80);
       return () => clearTimeout(timer);
     }
   }, [modalOpen]);
@@ -75,50 +86,44 @@ export default function ActionSection() {
   });
 
   return (
-    <section className="relative z-20 w-full flex flex-col items-center text-center px-6 pt-8 pb-20">
-      {/* Vertical divider */}
-      <div className="w-px h-6 mb-6" style={{ background: 'var(--line)' }} />
-
-      <div className="relative max-w-2xl w-full">
-        <p
-          className="mb-5 text-[10px] uppercase tracking-[0.35em] font-medium"
-          style={{ color: 'var(--accent)' }}
-        >
-          Begin
-        </p>
-        <h2
-          className="text-4xl md:text-5xl lg:text-6xl font-semibold tracking-tight"
-          style={{ color: 'var(--text)' }}
-        >
-          Start a Vendor Review.
-        </h2>
-        <p
-          className="mt-4 text-base leading-relaxed max-w-md mx-auto"
-          style={{ color: 'var(--text-2)' }}
-        >
-          Create a Checker workspace, upload the main DPA and supporting documents, then generate review criteria and an Approval Pack.
-        </p>
-
-        <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:justify-center">
-          <button
-            type="button"
-            onClick={openCreateModal}
-            className="inline-flex items-center justify-center gap-2 px-8 py-3.5 text-sm font-medium transition-opacity hover:opacity-80"
-            style={{ background: 'var(--invert)', color: 'var(--invert-fg)' }}
-          >
-            <Plus className="h-4 w-4" />
-            <span>Create Vendor Review</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => void openModal()}
-            className="inline-flex items-center justify-center gap-2 px-8 py-3.5 text-sm transition-opacity hover:opacity-70"
-            style={{ border: '1px solid var(--line)', color: 'var(--text-2)' }}
-          >
-            Open Existing Review
-          </button>
-        </div>
-      </div>
+    <section className="relative z-20 flex w-full flex-col items-center px-5 pb-24 pt-10 text-center md:pb-32">
+      <Card className="premium-panel w-full max-w-4xl py-0">
+        <CardHeader className="items-center px-6 pb-0 pt-10 md:px-12 md:pt-14">
+          <Badge variant="outline" className="rounded-full border-border bg-background px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+            Begin
+          </Badge>
+          <CardTitle className="mt-5 text-4xl font-semibold tracking-[-0.06em] md:text-6xl">
+            Start a Vendor Review.
+          </CardTitle>
+          <CardDescription className="mt-4 max-w-xl text-base leading-7">
+            Create a Checker workspace, upload the main DPA and supporting documents, then generate review criteria and an Approval Pack.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-6 pb-10 pt-8 md:px-12 md:pb-12">
+          <div className="mx-auto flex max-w-md flex-col gap-3 sm:flex-row sm:justify-center">
+            <Button type="button" size="lg" onClick={openCreateModal} className="h-12 flex-1 rounded-2xl px-5">
+              <Plus data-icon="inline-start" className="h-4 w-4" />
+              Create Review
+            </Button>
+            <Button type="button" size="lg" variant="outline" onClick={() => void openModal()} className="h-12 flex-1 rounded-2xl px-5">
+              Open Existing
+            </Button>
+          </div>
+          <div className="mt-10 grid gap-3 text-left md:grid-cols-3">
+            {[
+              ["Evidence-led", "Every finding stays tied to the source material."],
+              ["Criteria-first", "Confirm the standard before running the approval pack."],
+              ["Human approved", "Proposed edits require explicit user approval."],
+            ].map(([title, body]) => (
+              <div key={title} className="premium-subtle p-4">
+                <ShieldCheck className="mb-3 h-4 w-4" style={{ color: "var(--accent)" }} />
+                <div className="text-sm font-medium" style={{ color: "var(--text)" }}>{title}</div>
+                <p className="mt-2 text-sm leading-6" style={{ color: "var(--text-2)" }}>{body}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       <VendorReviewCreateDialog
         open={createModalOpen}
@@ -130,116 +135,64 @@ export default function ActionSection() {
         }}
       />
 
-      <AnimatePresence>
-        {modalOpen && (
-          <>
-            <motion.div
-              key="backdrop"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-40 backdrop-blur-sm"
-              style={{ background: 'rgba(0,0,0,0.55)' }}
-              onClick={() => setModalOpen(false)}
-            />
-            <motion.div
-              key="modal-wrapper"
-              initial={{ opacity: 0, scale: 0.96, y: 12 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 8 }}
-              transition={{ duration: 0.22, ease: "easeOut" }}
-              className="fixed inset-0 z-50 flex items-center justify-center p-4"
-              onClick={() => setModalOpen(false)}
-            >
-              <div
-                className="w-full max-w-lg text-left"
-                style={{ background: 'var(--bg-1)', border: '1px solid var(--line)' }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div
-                  className="flex items-center justify-between px-5 py-4"
-                  style={{ borderBottom: '1px solid var(--line)' }}
-                >
-                  <div
-                    className="text-[11px] uppercase tracking-[0.22em]"
-                    style={{ color: 'var(--text-3)' }}
-                  >
-                    Saved Reviews
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setModalOpen(false)}
-                    className="transition-colors"
-                    style={{ color: 'var(--text-3)' }}
-                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
-                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="px-5 pb-3 pt-4" style={{ borderBottom: '1px solid var(--line)' }}>
-                  <div
-                    className="flex items-center gap-3 px-4 py-2.5"
-                    style={{ border: '1px solid var(--line)', background: 'var(--bg-2)' }}
-                  >
-                    <Search className="h-4 w-4 shrink-0" style={{ color: 'var(--text-3)' }} />
-                    <input
-                      ref={searchRef}
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Search reviews..."
-                      className="flex-1 bg-transparent text-sm outline-none"
-                      style={{ color: 'var(--text)' }}
-                    />
-                  </div>
-                </div>
-
-                <div className="max-h-[360px] overflow-y-auto">
-                  {loadingProjects ? (
-                    <div className="flex items-center gap-3 px-5 py-8 text-sm" style={{ color: 'var(--text-2)' }}>
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                      <span>Loading...</span>
-                    </div>
-                  ) : filtered.length ? (
-                    filtered.map((project) => (
-                      <Link
-                        key={project.project_id}
-                        href={`/vendor-reviews/${project.vendor_review_id || project.project_id}/dashboard`}
-                        onClick={() => setModalOpen(false)}
-                        className="group flex items-center justify-between gap-4 px-5 py-4 transition-colors"
-                        style={{ borderBottom: '1px solid var(--line)' }}
-                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-2)')}
-                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium" style={{ color: 'var(--text)' }}>{project.vendor_name || project.name}</div>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style={{ color: 'var(--text-3)' }}>
-                            <span>{statusLabel(project.status)}</span>
-                            {project.document_filename && (
-                              <span className="truncate">{project.document_filename}</span>
-                            )}
-                            <span>{formatRelativeDate(project.last_activity_at)}</span>
-                          </div>
-                        </div>
-                        <ArrowUpRight
-                          className="h-4 w-4 shrink-0 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
-                          style={{ color: 'var(--text-3)' }}
-                        />
-                      </Link>
-                    ))
-                  ) : (
-                    <div className="px-5 py-8 text-sm" style={{ color: 'var(--text-3)' }}>
-                      {search ? "No matching reviews." : "No saved reviews yet."}
-                    </div>
-                  )}
-                </div>
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-w-2xl rounded-3xl p-0">
+          <DialogHeader className="px-6 pb-2 pt-6">
+            <DialogTitle className="text-2xl tracking-[-0.04em]">Saved reviews</DialogTitle>
+            <DialogDescription>Open an existing workspace and continue from the latest review state.</DialogDescription>
+          </DialogHeader>
+          <div className="px-6 pb-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: "var(--text-3)" }} />
+              <Input
+                ref={searchRef}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search reviews..."
+                className="h-11 rounded-2xl pl-9"
+              />
+            </div>
+          </div>
+          <ScrollArea className="max-h-[420px] border-t" style={{ borderColor: "var(--line)" }}>
+            {loadingProjects ? (
+              <div className="flex items-center gap-3 px-6 py-10 text-sm" style={{ color: "var(--text-2)" }}>
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                Loading saved reviews...
               </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+            ) : filtered.length ? (
+              <div className="grid p-3">
+                {filtered.map((project, index) => (
+                  <Link
+                    key={`${project.project_id}-${index}`}
+                    href={`/vendor-reviews/${project.vendor_review_id || project.project_id}/dashboard`}
+                    onClick={() => setModalOpen(false)}
+                    className="group flex items-center justify-between gap-4 rounded-2xl px-4 py-4 transition-colors hover:bg-muted"
+                  >
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
+                        <FileText className="h-4 w-4" style={{ color: "var(--accent)" }} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium" style={{ color: "var(--text)" }}>{project.vendor_name || project.name}</div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style={{ color: "var(--text-3)" }}>
+                          <span>{statusLabel(project.status)}</span>
+                          {project.document_filename ? <span className="truncate">{project.document_filename}</span> : null}
+                          <span>{formatRelativeDate(project.last_activity_at)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <ArrowUpRight className="h-4 w-4 shrink-0 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" style={{ color: "var(--text-3)" }} />
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <div className="px-6 py-10 text-sm" style={{ color: "var(--text-3)" }}>
+                {search ? "No matching reviews." : "No saved reviews yet."}
+              </div>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

@@ -72,3 +72,19 @@ def approval_pack_prompt_spec(settings: Settings) -> AgentPromptSpec:
             output_schema_version="v1",
         ),
     )
+
+
+def copilot_prompt_spec(settings: Settings) -> AgentPromptSpec:
+    return AgentPromptSpec(
+        prompt_path=_PROMPTS_DIR / "copilot_agent_v1.md",
+        loop_config=AgentLoopConfig(
+            agent_name="review_copilot_agent",
+            agent_role="copilot",
+            agent_version="v1",
+            prompt_version="copilot_agent_v1",
+            model_name=settings.gemini_approval_pack_model or settings.gemini_review_model,
+            max_tool_calls=settings.agent_default_max_tool_calls,
+            output_type="copilot_response",
+            output_schema_version="v1",
+        ),
+    )

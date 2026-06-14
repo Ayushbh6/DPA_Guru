@@ -443,5 +443,96 @@ class ApprovalPackResponse(BaseModel):
     published_at: datetime | None = None
 
 
+class CopilotThreadResponse(BaseModel):
+    thread_id: uuid.UUID
+    vendor_review_id: uuid.UUID
+    project_id: uuid.UUID
+    approval_pack_id: uuid.UUID | None = None
+    title: str | None = None
+    status: str
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreateCopilotThreadRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=255)
+
+
+class CopilotCitationResponse(BaseModel):
+    source_type: str
+    label: str
+    excerpt: str | None = None
+    document_id: str | None = None
+    document_name: str | None = None
+    document_type: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    kb_source_id: str | None = None
+    url: str | None = None
+
+
+class ApprovalPackRevisionResponse(BaseModel):
+    revision_id: uuid.UUID
+    vendor_review_id: uuid.UUID
+    project_id: uuid.UUID
+    approval_pack_id: uuid.UUID
+    created_by_type: str
+    created_by: str
+    summary: str
+    reason: str
+    changes_summary: str
+    patch: dict[str, Any]
+    previous_pack: dict[str, Any] | None = None
+    new_pack: dict[str, Any] | None = None
+    status: str
+    created_at: datetime
+    applied_at: datetime | None = None
+    rejected_at: datetime | None = None
+
+
+class CopilotMessageResponse(BaseModel):
+    message_id: uuid.UUID
+    thread_id: uuid.UUID
+    vendor_review_id: uuid.UUID
+    project_id: uuid.UUID
+    role: str
+    content: str
+    content_json: dict[str, Any] | None = None
+    model_version: str | None = None
+    agent_run_id: uuid.UUID | None = None
+    status: str
+    created_at: datetime
+    citations: list[CopilotCitationResponse] = Field(default_factory=list)
+    sources: list[CopilotCitationResponse] = Field(default_factory=list)
+    tool_activities: list[dict[str, Any]] = Field(default_factory=list)
+    revisions: list[ApprovalPackRevisionResponse] = Field(default_factory=list)
+    meta: dict[str, Any] | None = None
+
+
+class CopilotMessageRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=12000)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def strip_content(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class CopilotTurnResponse(BaseModel):
+    user_message: CopilotMessageResponse
+    assistant_message: CopilotMessageResponse
+    revision: ApprovalPackRevisionResponse | None = None
+
+
+class CopilotThreadEventResponse(BaseModel):
+    event_type: str
+    thread_id: uuid.UUID
+    message: CopilotMessageResponse | None = None
+    revision: ApprovalPackRevisionResponse | None = None
+
+
 class RenameProjectRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)

@@ -464,6 +464,91 @@ export type ApprovalPackResponse = {
   published_at?: string | null;
 };
 
+export type CopilotThread = {
+  thread_id: string;
+  project_id?: string;
+  vendor_review_id?: string;
+  title?: string | null;
+  status?: "active" | "archived" | string;
+  created_at: string;
+  updated_at: string;
+  last_message_at?: string | null;
+};
+
+export type CopilotSource = {
+  source_id?: string | null;
+  source_type?: "uploaded_document" | "kb" | "approval_pack" | "agent_trace" | string;
+  title: string;
+  label?: string | null;
+  excerpt?: string | null;
+  url?: string | null;
+  document_id?: string | null;
+  page?: number | null;
+};
+
+export type CopilotToolActivity = {
+  activity_id?: string | null;
+  label: string;
+  status?: "queued" | "running" | "completed" | "failed" | string;
+  detail?: string | null;
+  created_at?: string | null;
+};
+
+export type ApprovalPackRevision = {
+  revision_id: string;
+  approval_pack_id?: string | null;
+  vendor_review_id?: string | null;
+  project_id?: string | null;
+  status: "proposed" | "approved" | "applied" | "rejected" | string;
+  summary: string;
+  reason?: string | null;
+  patch?: Record<string, unknown> | null;
+  created_at?: string | null;
+  applied_at?: string | null;
+  rejected_at?: string | null;
+};
+
+export type CopilotMessage = {
+  message_id: string;
+  thread_id: string;
+  role: "user" | "assistant" | "system" | "tool" | string;
+  content: string;
+  status?: "queued" | "streaming" | "completed" | "failed" | string;
+  created_at: string;
+  updated_at?: string | null;
+  citations?: CopilotSource[];
+  sources?: CopilotSource[];
+  tool_activities?: CopilotToolActivity[];
+  revisions?: ApprovalPackRevision[];
+  meta?: Record<string, unknown> | null;
+};
+
+export type CopilotMessageResponse = {
+  thread_id?: string;
+  user_message?: CopilotMessage | null;
+  assistant_message?: CopilotMessage | null;
+  message?: CopilotMessage | null;
+  messages?: CopilotMessage[];
+  revision?: ApprovalPackRevision | null;
+};
+
+export type CopilotEvent = {
+  type?: string;
+  event?: string;
+  thread_id?: string;
+  message_id?: string;
+  role?: CopilotMessage["role"];
+  content?: string;
+  delta?: string;
+  message?: CopilotMessage;
+  activity?: CopilotToolActivity;
+  tool_activity?: CopilotToolActivity;
+  citation?: CopilotSource;
+  revision?: ApprovalPackRevision;
+  status?: string;
+  error?: string;
+};
+
 export type AnalysisFindingDetail = {
   check_id: string;
   title: string;
@@ -820,6 +905,46 @@ export async function getApprovalPack(runId: string): Promise<ApprovalPackRespon
   return parseJson<ApprovalPackResponse>(res);
 }
 
+export async function listCopilotThreads(projectId: string): Promise<CopilotThread[]> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${projectId}/copilot/threads`, { cache: "no-store" });
+  return parseJson<CopilotThread[]>(res);
+}
+
+export async function createCopilotThread(projectId: string): Promise<CopilotThread> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/vendor-reviews/${projectId}/copilot/threads`, {
+    method: "POST",
+  });
+  return parseJson<CopilotThread>(res);
+}
+
+export async function listCopilotMessages(threadId: string): Promise<CopilotMessage[]> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/copilot-threads/${threadId}/messages`, { cache: "no-store" });
+  return parseJson<CopilotMessage[]>(res);
+}
+
+export async function sendCopilotMessage(threadId: string, content: string): Promise<CopilotMessageResponse> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/copilot-threads/${threadId}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  return parseJson<CopilotMessageResponse>(res);
+}
+
+export async function applyApprovalPackRevision(revisionId: string): Promise<ApprovalPackRevision> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/approval-pack-revisions/${revisionId}/apply`, {
+    method: "POST",
+  });
+  return parseJson<ApprovalPackRevision>(res);
+}
+
+export async function rejectApprovalPackRevision(revisionId: string): Promise<ApprovalPackRevision> {
+  const res = await apiFetch(`${getApiBaseUrl()}/v1/approval-pack-revisions/${revisionId}/reject`, {
+    method: "POST",
+  });
+  return parseJson<ApprovalPackRevision>(res);
+}
+
 export async function createChecklistDraft(payload: ChecklistDraftPayload): Promise<ChecklistDraftBootstrapResponse> {
   const res = await apiFetch(`${getApiBaseUrl()}/v1/checklist-drafts`, {
     method: "POST",
@@ -863,4 +988,8 @@ export function checklistDraftEventsUrl(draftId: string) {
 
 export function analysisRunEventsUrl(runId: string) {
   return `${getWsBaseUrl()}/v1/analysis-runs/${runId}/events`;
+}
+
+export function copilotThreadEventsUrl(threadId: string) {
+  return `${getWsBaseUrl()}/v1/copilot-threads/${threadId}/events`;
 }

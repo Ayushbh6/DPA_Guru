@@ -40,6 +40,7 @@ class AgentRunScope(AgentStrictModel):
     project_id: uuid.UUID | None = None
     analysis_run_id: uuid.UUID | None = None
     approval_pack_id: uuid.UUID | None = None
+    copilot_thread_id: uuid.UUID | None = None
     parent_agent_run_id: uuid.UUID | None = None
 
 
@@ -127,3 +128,30 @@ class ApprovalPackAgentOutput(AgentStrictModel):
     vendor_follow_up_questions: list[str] = Field(default_factory=list)
     internal_memo: str = Field(min_length=1)
     confidence_notes: list[str] = Field(default_factory=list)
+
+
+class CopilotCitation(AgentStrictModel):
+    source_type: str
+    label: str
+    excerpt: str | None = None
+    document_id: str | None = None
+    document_name: str | None = None
+    document_type: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    kb_source_id: str | None = None
+    url: str | None = None
+
+
+class CopilotRevisionProposal(AgentStrictModel):
+    reason: str = Field(min_length=1)
+    changes_summary: str = Field(min_length=1)
+    patch: dict[str, Any]
+    preview_pack: dict[str, Any]
+
+
+class CopilotAgentOutput(AgentStrictModel):
+    answer: str = Field(min_length=1)
+    citations: list[CopilotCitation] = Field(default_factory=list)
+    suggested_questions: list[str] = Field(default_factory=list)
+    revision: CopilotRevisionProposal | None = None

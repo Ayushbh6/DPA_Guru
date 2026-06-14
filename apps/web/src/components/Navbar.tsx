@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Shield, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
+import { Button } from "@/components/ui/button";
 
 function formatDisplayName(username: string) {
   if (!username) return "";
@@ -34,17 +35,16 @@ function ThemeToggle() {
   }
 
   return (
-    <button
+    <Button
       type="button"
       onClick={toggle}
       aria-label="Toggle color theme"
-      className="flex items-center justify-center w-8 h-8 transition-colors"
-      style={{ color: 'var(--text-3)' }}
-      onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
-      onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
+      variant="ghost"
+      size="icon"
+      className="h-9 w-9 rounded-2xl text-muted-foreground hover:text-foreground"
     >
       {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-    </button>
+    </Button>
   );
 }
 
@@ -58,45 +58,45 @@ export default function Navbar() {
 
   return (
     <nav
-      className="fixed top-0 left-0 w-full z-50 backdrop-blur-xl"
+      className="fixed left-0 top-0 z-50 w-full"
       style={{
-        background: 'color-mix(in srgb, var(--bg) 85%, transparent)',
-        borderBottom: '1px solid color-mix(in srgb, var(--line) 60%, transparent)',
+        background: 'color-mix(in srgb, var(--bg) 96%, var(--bg-1))',
+        borderBottom: '1px solid var(--line)',
       }}
     >
-      <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 md:px-6">
         <Link
           href="/"
-          className="flex items-center gap-3 group"
+          className="group flex items-center gap-3"
           style={{ color: 'var(--text)' }}
         >
-          <Shield
-            className="w-5 h-5 transition-transform duration-300 group-hover:scale-110"
-            style={{ color: 'var(--accent)' }}
-          />
-          <span className="text-sm font-medium tracking-wide">
+          <span className="flex h-9 w-9 items-center justify-center rounded-2xl border" style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}>
+            <Shield className="h-4 w-4 transition-transform duration-300 group-hover:scale-110" style={{ color: 'var(--accent)' }} />
+          </span>
+          <span className="text-sm font-semibold tracking-[-0.02em]">
             Checker
           </span>
         </Link>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
           {user ? (
             <>
-              <div className="text-sm" style={{ color: "var(--text-2)" }}>
+              <div className="hidden text-sm sm:block" style={{ color: "var(--text-2)" }}>
                 Hi, <span style={{ color: "var(--text)" }}>{formatDisplayName(user.username)}</span>
               </div>
-              <button
+              <Button
                 type="button"
                 onClick={() => void logoutUser()}
-                className="text-sm transition-colors"
-                style={{ color: "var(--text-2)" }}
+                variant="ghost"
+                size="sm"
+                className="rounded-2xl text-muted-foreground hover:text-foreground"
               >
                 Log out
-              </button>
+              </Button>
             </>
           ) : (
-            <Link href="/login" className="text-sm transition-colors" style={{ color: "var(--text-2)" }}>
+            <Button render={<Link href="/login" />} variant="outline" size="sm" className="rounded-2xl">
               Log in
-            </Link>
+            </Button>
           )}
           <ThemeToggle />
         </div>

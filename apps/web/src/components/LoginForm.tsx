@@ -2,10 +2,13 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { LoaderCircle, ShieldCheck } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { login } from "@/lib/uploadApi";
 import { useAuth } from "@/components/AuthProvider";
-
 
 export default function LoginForm({ nextPath }: { nextPath: string }) {
   const router = useRouter();
@@ -32,65 +35,56 @@ export default function LoginForm({ nextPath }: { nextPath: string }) {
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      suppressHydrationWarning
-      className="w-full max-w-md p-8"
-      style={{ background: "var(--bg-1)", border: "1px solid var(--line)" }}
-    >
-      <div className="mb-8">
-        <div className="mb-2 text-xs uppercase tracking-[0.3em]" style={{ color: "var(--accent)" }}>
+    <Card className="premium-panel w-full max-w-md py-0">
+      <CardHeader className="px-7 pt-8">
+        <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
+          <ShieldCheck className="h-5 w-5" style={{ color: "var(--accent)" }} />
+        </div>
+        <div className="text-[11px] uppercase tracking-[0.28em]" style={{ color: "var(--accent)" }}>
           Private Alpha
         </div>
-        <h1 className="text-3xl font-semibold">Log in to Checker</h1>
-        <p className="mt-3 text-sm" style={{ color: "var(--text-2)" }}>
+        <CardTitle className="mt-2 text-3xl tracking-[-0.055em]">Log in to Checker</CardTitle>
+        <CardDescription className="leading-6">
           Use the tester credentials you were given to access the Vendor Review workspace.
-        </p>
-      </div>
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="px-7 pb-8">
+        <form onSubmit={handleSubmit} suppressHydrationWarning className="grid gap-5">
+          <label className="grid gap-2 text-sm">
+            <span style={{ color: "var(--text-2)" }}>Username</span>
+            <Input
+              suppressHydrationWarning
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="username"
+              className="h-12 rounded-2xl bg-background px-4"
+            />
+          </label>
 
-      <label className="mb-5 block text-sm">
-        <span className="mb-2 block" style={{ color: "var(--text-2)" }}>
-          Username
-        </span>
-        <input
-          suppressHydrationWarning
-          value={username}
-          onChange={(event) => setUsername(event.target.value)}
-          autoComplete="username"
-          className="w-full px-4 py-3 outline-none"
-          style={{ background: "var(--bg-2)", border: "1px solid var(--line)" }}
-        />
-      </label>
+          <label className="grid gap-2 text-sm">
+            <span style={{ color: "var(--text-2)" }}>Password</span>
+            <Input
+              suppressHydrationWarning
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              className="h-12 rounded-2xl bg-background px-4"
+            />
+          </label>
 
-      <label className="mb-6 block text-sm">
-        <span className="mb-2 block" style={{ color: "var(--text-2)" }}>
-          Password
-        </span>
-        <input
-          suppressHydrationWarning
-          type="password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          autoComplete="current-password"
-          className="w-full px-4 py-3 outline-none"
-          style={{ background: "var(--bg-2)", border: "1px solid var(--line)" }}
-        />
-      </label>
+          {error ? (
+            <div className="rounded-2xl border px-4 py-3 text-sm" style={{ borderColor: "var(--danger)", background: "var(--danger-bg)", color: "var(--danger)" }}>
+              {error}
+            </div>
+          ) : null}
 
-      {error ? (
-        <div className="mb-4 text-sm" style={{ color: "var(--status-noncompliant)" }}>
-          {error}
-        </div>
-      ) : null}
-
-      <button
-        type="submit"
-        disabled={submitting || !username.trim() || !password}
-        className="w-full px-4 py-3 text-sm font-medium disabled:opacity-50"
-        style={{ background: "var(--invert)", color: "var(--invert-fg)" }}
-      >
-        {submitting ? "Signing in..." : "Log in"}
-      </button>
-    </form>
+          <Button type="submit" disabled={submitting || !username.trim() || !password} className="h-12 rounded-2xl">
+            {submitting ? <LoaderCircle data-icon="inline-start" className="h-4 w-4 animate-spin" /> : null}
+            {submitting ? "Signing in..." : "Log in"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }

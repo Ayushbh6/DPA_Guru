@@ -109,7 +109,7 @@ function SidebarProjectItem({
 
   return (
     <div
-      className="group relative flex items-start border transition-colors"
+      className="group relative flex items-start rounded-2xl border transition-colors"
       style={{
         borderColor: active ? 'var(--line-2)' : 'var(--line)',
         background: active ? 'var(--bg-2)' : 'transparent',
@@ -123,7 +123,7 @@ function SidebarProjectItem({
         <div className="flex items-center gap-2">
           {collapsed ? (
             <div
-              className="mx-auto flex h-6 w-6 items-center justify-center text-xs font-bold"
+              className="mx-auto flex h-6 w-6 items-center justify-center rounded-xl text-xs font-bold"
               style={{ background: 'var(--bg-2)', color: 'var(--text-2)' }}
             >
               {project.name.charAt(0).toUpperCase()}
@@ -167,7 +167,7 @@ function SidebarProjectItem({
 
           {menuOpen && (
             <div
-              className="absolute right-0 top-full z-50 mt-1 w-32 py-1 shadow-xl"
+              className="absolute right-0 top-full z-50 mt-1 w-36 rounded-2xl py-1 shadow-xl"
               style={{ background: 'var(--bg-1)', border: '1px solid var(--line)' }}
             >
               <button
@@ -309,9 +309,9 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
 
   if (loading) {
     return (
-      <main className="min-h-screen px-6 py-10" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
+      <main className="min-h-screen px-6 py-10" style={{ color: 'var(--text)' }}>
         <div
-          className="mx-auto flex min-h-[70vh] max-w-6xl items-center justify-center gap-3"
+          className="premium-panel mx-auto flex min-h-[70vh] max-w-6xl items-center justify-center gap-3"
           style={{ border: '1px solid var(--line)' }}
         >
           <LoaderCircle className="h-5 w-5 animate-spin" style={{ color: 'var(--text-2)' }} />
@@ -323,9 +323,9 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
 
   if (!detail?.project) {
     return (
-      <main className="min-h-screen px-6 py-10" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
+      <main className="min-h-screen px-6 py-10" style={{ color: 'var(--text)' }}>
         <div
-          className="mx-auto flex min-h-[70vh] max-w-3xl flex-col items-center justify-center border px-8 text-center"
+          className="premium-panel mx-auto flex min-h-[70vh] max-w-3xl flex-col items-center justify-center px-8 text-center"
           style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}
         >
           <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: 'var(--text-3)' }}>
@@ -360,7 +360,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
   ];
 
   return (
-    <main className="min-h-svh md:flex md:h-svh md:flex-row md:overflow-hidden" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
+    <main className="min-h-svh md:flex md:h-svh md:flex-row md:overflow-hidden" style={{ color: 'var(--text)' }}>
       {/* Mobile overlay backdrop */}
       {mobileOverlay && (
         <div
@@ -377,7 +377,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
             ? "translate-x-0 w-[min(84vw,320px)] md:w-[260px]"
             : "-translate-x-full w-[min(84vw,320px)] md:w-[72px] md:translate-x-0"
         }`}
-        style={{ background: 'var(--bg-1)', borderRight: '1px solid var(--line)' }}
+        style={{ background: 'color-mix(in srgb, var(--bg-1) 96%, var(--bg))', borderRight: '1px solid var(--line)' }}
       >
         <div className="flex h-12 items-center justify-between px-4 md:h-14" style={{ borderBottom: '1px solid var(--line)' }}>
           <div
@@ -386,7 +386,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
             }`}
           >
             <div
-              className="flex h-8 w-8 shrink-0 items-center justify-center"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl"
               style={{ border: '1px solid var(--line)', color: 'var(--accent)' }}
             >
               <ShieldCheck className="h-4 w-4" />
@@ -415,7 +415,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
             type="button"
             onClick={handleNewProject}
             title={sidebarOpen ? undefined : "New Vendor Review"}
-            className="flex w-full items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium transition-opacity hover:opacity-80"
+            className="flex w-full items-center justify-center gap-2 rounded-2xl px-3 py-2.5 text-sm font-medium transition-opacity hover:opacity-80"
             style={{ background: 'var(--invert)', color: 'var(--invert-fg)', border: '1px solid var(--line)' }}
           >
             <FolderPlus className="h-4 w-4 shrink-0" />
@@ -446,10 +446,10 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
           )}
 
           <div className="mt-4 space-y-2">
-            {projects.map((project) => {
+            {projects.map((project, index) => {
               if (inlineRenameProject?.project_id === project.project_id && sidebarOpen) {
                 return (
-                  <div key={project.project_id} className="p-3" style={{ border: '1px solid var(--line-2)', background: 'var(--bg-2)' }}>
+                  <div key={`${project.project_id}-rename-${index}`} className="rounded-2xl p-3" style={{ border: '1px solid var(--line-2)', background: 'var(--bg-2)' }}>
                     <input
                       autoFocus
                       value={inlineRenameValue}
@@ -470,7 +470,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
               }
               return (
                 <SidebarProjectItem
-                  key={project.project_id}
+                  key={`${project.project_id}-${index}`}
                   project={project}
                   active={project.project_id === projectId}
                   collapsed={!sidebarOpen}
@@ -493,7 +493,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
         <button
           type="button"
           onClick={toggleSidebar}
-          className={`fixed left-4 top-4 z-20 flex h-10 w-10 items-center justify-center md:hidden ${
+          className={`fixed left-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-2xl md:hidden ${
             sidebarOpen ? "pointer-events-none opacity-0" : ""
           }`}
           style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', color: 'var(--text-2)' }}
@@ -502,7 +502,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
         </button>
 
         <div className="mx-auto w-full max-w-7xl px-4 pb-6 pt-14 md:flex md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto md:px-5 md:py-4 lg:px-6 lg:py-5">
-          <header className="shrink-0 px-4 py-2.5 md:px-5 md:py-2.5 lg:px-6 lg:py-3" style={{ background: 'var(--bg-1)' }}>
+          <header className="premium-panel shrink-0 px-4 py-3 md:px-5 lg:px-6" style={{ boxShadow: 'none' }}>
             <div className="min-w-0">
                 {!renameMode ? (
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -519,7 +519,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                     >
                       <PencilLine className="h-3.5 w-3.5" />
                     </button>
-                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em]" style={projectStatusStyle(currentProject?.status || 'EMPTY')}>
+                    <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.1em]" style={projectStatusStyle(currentProject?.status || 'EMPTY')}>
                       <span className="inline-block h-1.5 w-1.5" style={{ background: statusDotColor(currentProject?.status || 'EMPTY'), borderRadius: '50%' }} />
                       {formatStatus(currentProject?.status || "EMPTY")}
                     </span>
@@ -540,7 +540,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                            setRenameValue(currentProject?.name || "");
                         }
                       }}
-                      className="w-full px-3 py-2 text-sm outline-none sm:max-w-xl"
+                      className="w-full rounded-2xl px-3 py-2 text-sm outline-none sm:max-w-xl"
                       style={{ border: '1px solid var(--line)', background: 'var(--bg-2)', color: 'var(--text)' }}
                       onFocus={e => (e.currentTarget.style.borderColor = 'var(--line-2)')}
                       onBlur={e => (e.currentTarget.style.borderColor = 'var(--line)')}
@@ -550,7 +550,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                         type="button"
                         onClick={() => void handleRename()}
                         disabled={renaming || !renameValue.trim()}
-                        className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium disabled:opacity-40 transition-opacity hover:opacity-80"
+                        className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium transition-opacity hover:opacity-80 disabled:opacity-40"
                         style={{ background: 'var(--invert)', color: 'var(--invert-fg)', border: '1px solid var(--line)' }}
                       >
                         {renaming ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -562,7 +562,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                           setRenameMode(false);
                           setRenameValue(currentProject?.name || "");
                         }}
-                        className="inline-flex items-center gap-2 px-3 py-2 text-sm transition-colors"
+                        className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm transition-colors"
                         style={{ border: '1px solid var(--line)', color: 'var(--text-2)' }}
                       >
                         <X className="h-4 w-4" />
@@ -582,7 +582,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                     key={tab.name}
                     href={tab.href}
                     aria-label={tab.name}
-                    className="flex items-center gap-1.5 whitespace-nowrap border-b-2 px-2.5 py-2 text-xs font-medium transition-colors md:px-3 md:py-2 md:text-sm lg:px-3.5 lg:py-2.5"
+                    className="flex items-center gap-1.5 whitespace-nowrap rounded-2xl border-b-2 px-2.5 py-2 text-xs font-medium transition-colors md:px-3 md:py-2 md:text-sm lg:px-3.5 lg:py-2.5"
                     style={{
                       borderBottomColor: isActive ? 'var(--accent)' : 'transparent',
                       color: isActive ? 'var(--text)' : 'var(--text-3)',
@@ -590,7 +590,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
                     onMouseEnter={e => { if (!isActive) { e.currentTarget.style.color = 'var(--text-2)'; e.currentTarget.style.borderBottomColor = 'var(--line-2)'; } }}
                     onMouseLeave={e => { if (!isActive) { e.currentTarget.style.color = 'var(--text-3)'; e.currentTarget.style.borderBottomColor = 'transparent'; } }}
                   >
-                    <span className="inline-flex h-5 w-5 items-center justify-center text-[10px] font-semibold" style={{ background: isActive ? 'var(--accent)' : 'var(--bg-2)', color: isActive ? 'var(--invert-fg)' : 'var(--text-3)', borderRadius: '4px' }}>{tabIdx + 1}</span>
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-lg text-[10px] font-semibold" style={{ background: isActive ? 'var(--accent)' : 'var(--bg-2)', color: isActive ? 'var(--invert-fg)' : 'var(--text-3)' }}>{tabIdx + 1}</span>
                     <span className="md:hidden">{tab.shortName}</span>
                     <span className="hidden md:inline">{tab.name}</span>
                   </Link>
@@ -600,7 +600,7 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
           </header>
 
           {workspaceError && (
-            <div className="mt-4 shrink-0 border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-500 md:mt-5">
+            <div className="mt-4 shrink-0 rounded-2xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-500 md:mt-5">
               {workspaceError}
             </div>
           )}

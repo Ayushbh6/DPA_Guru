@@ -3,7 +3,7 @@
 import { useLayoutEffect, useRef } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { Shield } from "lucide-react";
+import { ArrowDown, CheckCircle2, FileText, Shield } from "lucide-react";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -17,44 +17,51 @@ export default function HeroScroll() {
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduceMotion) {
+        gsap.set(bookRef.current, { opacity: 0.88, y: 170, scale: 0.88 });
+        return;
+      }
+
+      gsap.set(bookRef.current, { opacity: 0.22, y: 190, scale: 0.84 });
+
       const tl = gsap.timeline({
         scrollTrigger: {
           trigger: containerRef.current,
           start: "top top",
-          end: "+=2200",
-          scrub: 1,
+          end: "+=1500",
+          scrub: 0.7,
           pin: true,
           anticipatePin: 1,
         },
       });
 
-      // Phase 1: Fade out title, tilt the document into 3D view
-      tl.to(textRef.current, { opacity: 0, y: -50, filter: "blur(10px)", duration: 1 }, 0);
+      tl.to(textRef.current, { opacity: 0, y: -26, scale: 0.98, duration: 1 }, 0);
       tl.to(bookRef.current, {
-        rotateX: 60,
-        rotateZ: -20,
-        scale: 0.9,
+        opacity: 0.96,
+        rotateX: 46,
+        rotateZ: -8,
+        y: 26,
+        scale: 0.94,
         duration: 2,
         ease: "power2.inOut"
       }, 0);
 
-      // Phase 2: Open the cover
       tl.to(coverRef.current, {
-        rotateY: -160,
+        rotateY: -122,
         duration: 2,
         ease: "power2.inOut",
-      }, 1.5);
+      }, 1.15);
 
-      // Phase 3: Animate the scanner line
       tl.fromTo(scannerRef.current, {
-        top: "0%",
-        opacity: 0,
+        yPercent: -10,
+        opacity: 0.1,
       }, {
-        top: "100%",
-        opacity: 1,
-        duration: 3,
+        yPercent: 980,
+        opacity: 0.9,
+        duration: 2.4,
         ease: "linear"
-      }, 2.5);
+      }, 1.7);
 
     }, containerRef);
 
@@ -65,104 +72,126 @@ export default function HeroScroll() {
     <div ref={containerRef} className="relative w-full overflow-hidden">
       <div
         ref={stickyRef}
-        className="h-screen w-full flex items-center justify-center relative pt-16"
-        style={{ background: 'var(--bg)' }}
+        className="relative flex h-screen w-full items-center justify-center overflow-hidden px-5 pt-16"
       >
-        {/* Main Title */}
-        <div ref={textRef} className="absolute inset-0 flex flex-col items-center justify-center z-20 pointer-events-none">
+        <div
+          className="absolute inset-x-0 top-24 mx-auto h-72 max-w-5xl rounded-full blur-3xl"
+          style={{ background: "color-mix(in srgb, var(--accent) 12%, transparent)" }}
+        />
+
+        <div ref={textRef} className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center text-center">
+          <div
+            className="mb-5 inline-flex items-center gap-2 border px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.24em]"
+            style={{ borderColor: "var(--line)", background: "var(--bg-1)", color: "var(--text-3)" }}
+          >
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--accent)" }} />
+            Vendor Review Workspace
+          </div>
           <h1
-            className="text-7xl md:text-9xl font-bold tracking-tight text-center"
+            className="text-7xl font-semibold tracking-[-0.08em] md:text-9xl"
             style={{ color: 'var(--text)' }}
           >
             Checker
           </h1>
           <p
-            className="text-xs md:text-sm tracking-[0.3em] uppercase font-light mt-4"
-            style={{ color: 'var(--accent)' }}
+            className="mt-5 max-w-xl text-base leading-7 md:text-lg"
+            style={{ color: 'var(--text-2)' }}
           >
-            Vendor Review Workspace
+            AI-assisted DPA reviews with evidence, criteria, and approval decisions in one calm workspace.
           </p>
+          <div className="mt-12 flex items-center gap-2 text-xs" style={{ color: "var(--text-3)" }}>
+            <ArrowDown className="h-4 w-4 animate-bounce" />
+            Scroll to open the review pack
+          </div>
         </div>
 
-        {/* 3D Scene */}
-        <div className="relative w-full h-full flex items-center justify-center [perspective:2500px] z-10">
-
-          {/* The Document Container */}
+        <div className="relative z-10 flex h-full w-full items-center justify-center [perspective:2200px]">
           <div
             ref={bookRef}
-            className="relative w-[336px] h-[440px] md:w-[476px] md:h-[622px] translate-y-[8px] md:translate-y-[19px] [transform-style:preserve-3d]"
+            className="relative mt-40 h-[430px] w-[330px] translate-y-[8px] [transform-style:preserve-3d] md:mt-52 md:h-[610px] md:w-[468px] md:translate-y-[22px]"
             style={{
-              boxShadow: '0 0 0 1px var(--line), 0 30px 80px rgba(0,0,0,0.2)',
+              opacity: 0.22,
+              boxShadow: '0 34px 110px color-mix(in srgb, #000 22%, transparent)',
             }}
           >
-            {/* Back Cover / Inside Pages */}
             <div
-              className="absolute inset-0 overflow-hidden flex flex-col p-6 md:p-10"
-              style={{ background: 'var(--bg-1)', border: '1px solid var(--line)' }}
+              className="absolute inset-0 flex flex-col overflow-hidden rounded-[28px] p-6 md:p-9"
+              style={{ background: 'var(--bg)', border: '1px solid var(--line)' }}
             >
               <div
-                className="flex items-center justify-between mb-8 pb-4"
-                style={{ borderBottom: '1px solid var(--line)' }}
+                className="mb-8 flex items-center justify-between rounded-2xl px-3 py-2"
+                style={{ background: 'var(--bg-1)', border: '1px solid var(--line)' }}
               >
-                <Shield className="w-5 h-5 md:w-6 md:h-6" style={{ color: 'var(--text-3)' }} />
-                <span
-                  className="text-[10px] md:text-xs tracking-widest uppercase font-medium"
-                  style={{ color: 'var(--text-3)' }}
-                >
-                  Review Mode
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 md:h-5 md:w-5" style={{ color: 'var(--accent)' }} />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: 'var(--text-2)' }}>
+                    DPA Review
+                  </span>
+                </div>
+                <span className="rounded-full px-2 py-1 text-[10px]" style={{ background: 'var(--status-partial-bg)', color: 'var(--status-partial)' }}>
+                  Draft
                 </span>
               </div>
 
-              {/* Skeleton Document with Scanner */}
-              <div className="space-y-5 md:space-y-6 flex-1 relative">
-                {/* Scanner Line */}
+              <div
+                className="mb-6 rounded-3xl p-4"
+                style={{ borderBottom: '1px solid var(--line)' }}
+              >
+                <div className="text-[11px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-3)' }}>Recommendation</div>
+                <div className="mt-2 flex items-center gap-2 text-xl font-semibold md:text-2xl" style={{ color: 'var(--text)' }}>
+                  Conditional approval
+                  <CheckCircle2 className="h-5 w-5" style={{ color: 'var(--status-compliant)' }} />
+                </div>
+              </div>
+
+              <div className="relative flex-1">
                 <div
                   ref={scannerRef}
-                  className="absolute left-0 right-0 h-px z-20"
+                  className="absolute left-0 right-0 top-0 z-20 h-px"
                   style={{
-                    top: '0%',
                     background: 'var(--accent)',
-                    boxShadow: '0 0 10px 2px var(--accent)',
+                    boxShadow: '0 0 22px 3px color-mix(in srgb, var(--accent) 70%, transparent)',
                   }}
                 />
-
-                <div className="w-full h-2 md:h-2.5" style={{ background: 'var(--line-2)' }} />
-                <div className="w-3/4 h-2 md:h-2.5" style={{ background: 'var(--line-2)' }} />
-
-                {/* Highlighted Risk Clause */}
-                <div
-                  className="w-full h-16 md:h-20 p-3 relative overflow-hidden flex flex-col justify-center space-y-2"
-                  style={{ background: 'var(--bg-2)', borderLeft: '2px solid var(--accent)' }}
-                >
-                  <div className="w-1/4 h-1.5 md:h-2" style={{ background: 'var(--text-3)' }} />
-                  <div className="w-full h-1.5 md:h-2" style={{ background: 'var(--line-2)' }} />
-                  <div className="w-5/6 h-1.5 md:h-2" style={{ background: 'var(--line-2)' }} />
+                <div className="grid gap-4">
+                  <div className="h-2.5 w-full rounded-full" style={{ background: 'var(--line-2)' }} />
+                  <div className="h-2.5 w-3/4 rounded-full" style={{ background: 'var(--line-2)' }} />
+                  <div className="rounded-3xl p-4" style={{ background: 'var(--bg-1)', border: '1px solid var(--line)' }}>
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="h-2 w-24 rounded-full" style={{ background: 'var(--text-3)' }} />
+                      <span className="rounded-full px-2 py-1 text-[10px]" style={{ background: 'var(--risk-high-bg)', color: 'var(--risk-high)' }}>
+                        High risk
+                      </span>
+                    </div>
+                    <div className="grid gap-2">
+                      <div className="h-2 rounded-full" style={{ background: 'var(--line-2)' }} />
+                      <div className="h-2 w-5/6 rounded-full" style={{ background: 'var(--line-2)' }} />
+                    </div>
+                  </div>
+                  <div className="h-2.5 w-5/6 rounded-full" style={{ background: 'var(--line)' }} />
+                  <div className="h-2.5 w-full rounded-full" style={{ background: 'var(--line)' }} />
+                  <div className="h-2.5 w-4/6 rounded-full" style={{ background: 'var(--line)' }} />
                 </div>
-
-                <div className="w-5/6 h-2 md:h-2.5" style={{ background: 'var(--line)' }} />
-                <div className="w-full h-2 md:h-2.5" style={{ background: 'var(--line)' }} />
-                <div className="w-4/6 h-2 md:h-2.5" style={{ background: 'var(--line)' }} />
               </div>
             </div>
 
-            {/* Front Cover */}
             <div
               ref={coverRef}
-              className="absolute inset-0 origin-left [transform-style:preserve-3d] z-30 flex items-center justify-center"
+              className="absolute inset-0 z-30 flex origin-left items-center justify-center rounded-[28px] [transform-style:preserve-3d]"
               style={{
                 background: 'var(--bg-2)',
                 border: '1px solid var(--line)',
               }}
             >
-              <Shield
-                className="w-10 h-10 md:w-12 md:h-12 stroke-1"
-                style={{ color: 'var(--text-3)' }}
-              />
+              <div className="text-center">
+                <Shield className="mx-auto h-12 w-12 stroke-1 md:h-14 md:w-14" style={{ color: 'var(--text-3)' }} />
+                <div className="mt-5 text-[11px] uppercase tracking-[0.28em]" style={{ color: 'var(--text-3)' }}>
+                  Processing Agreement
+                </div>
+              </div>
             </div>
-
           </div>
         </div>
-
       </div>
     </div>
   );

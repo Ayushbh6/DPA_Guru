@@ -4,10 +4,10 @@ import ActionSection from "@/components/ActionSection";
 
 export default function Home() {
   return (
-    <main className="relative flex min-h-screen flex-col items-center" style={{ background: 'var(--bg)' }}>
+    <main className="relative flex min-h-screen flex-col items-center overflow-hidden">
       <HeroScroll />
 
-      <section className="w-full py-4 md:py-8 relative z-10">
+      <section className="relative z-10 w-full py-4 md:py-8">
         <ScrollRevealText>
           Understand your obligations with absolute clarity.
         </ScrollRevealText>
@@ -24,7 +24,7 @@ export default function Home() {
       <ActionSection />
 
       <footer
-        className="w-full py-8 flex items-center justify-center text-[10px] tracking-[0.25em] uppercase font-light"
+        className="flex w-full items-center justify-center py-10 text-[10px] font-medium uppercase tracking-[0.28em]"
         style={{ borderTop: '1px solid var(--line)', color: 'var(--text-3)' }}
       >
         © 2026 Checker

@@ -109,6 +109,7 @@ class AgentLoopRunner:
         tools: list[AgentTool],
         task_input: dict[str, Any],
         user_message: str,
+        history_messages: list[dict[str, str]] | None = None,
         cancel_check: Callable[[], bool] | None = None,
         run_started_cb: Callable[[str], None] | None = None,
     ) -> None:
@@ -121,6 +122,7 @@ class AgentLoopRunner:
         self._tools = tools
         self._task_input = task_input
         self._user_message = user_message
+        self._history_messages = history_messages or []
         self._cancel_check = cancel_check
         self._run_started_cb = run_started_cb
         self._message_seq = 0
@@ -139,9 +141,17 @@ class AgentLoopRunner:
         self._append_message(run_id, role="user", content=self._user_message, content_json=self._task_input)
         self._append_event(run_id, "agent_started", {"input": self._task_input})
 
-        history: list[types.Content] = [
-            types.Content(role="user", parts=[types.Part(text=self._user_message)])
-        ]
+        history: list[types.Content] = []
+        for item in self._history_messages:
+            role = item.get("role")
+            content = item.get("content", "").strip()
+            if not content:
+                continue
+            if role == "assistant":
+                history.append(types.Content(role="model", parts=[types.Part(text=content)]))
+            elif role == "user":
+                history.append(types.Content(role="user", parts=[types.Part(text=content)]))
+        history.append(types.Content(role="user", parts=[types.Part(text=self._user_message)]))
         tool_map = {tool.name: tool for tool in self._tools}
         tool_budget_used = 0
         last_response: Any | None = None
@@ -250,6 +260,7 @@ class AgentLoopRunner:
                 project_id=self._scope.project_id,
                 analysis_run_id=self._scope.analysis_run_id,
                 approval_pack_id=self._scope.approval_pack_id,
+                copilot_thread_id=self._scope.copilot_thread_id,
                 parent_agent_run_id=self._scope.parent_agent_run_id,
                 agent_name=self._loop_config.agent_name,
                 agent_role=self._loop_config.agent_role,

@@ -15,11 +15,12 @@ import {
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { CheckerPanel, CheckerSurface } from "@/components/checker-ui";
+import { CheckerPanel } from "@/components/checker-ui";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import {
   ApiError,
   applyApprovalPackRevision,
@@ -248,7 +249,15 @@ function MessageBubble({
   );
 }
 
-export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
+export function ApprovalPackCopilot({
+  projectId,
+  onClose,
+  className,
+}: {
+  projectId: string;
+  onClose?: () => void;
+  className?: string;
+}) {
   const [threadState, setThreadState] = useState<ThreadState>("loading");
   const [threads, setThreads] = useState<CopilotThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -495,45 +504,51 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
   }
 
   return (
-    <CheckerSurface className="overflow-hidden">
-      <div className="border-b p-4" style={{ borderColor: "var(--line)" }}>
+    <section className={cn("flex min-h-[560px] flex-col overflow-hidden rounded-xl border border-border/70 bg-card/95 text-card-foreground shadow-sm", className)}>
+      <div className="border-b border-border/70 p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
               <PanelRight className="h-3.5 w-3.5" />
               Approval Copilot
             </div>
-            <p className="mt-2 text-sm leading-5" style={{ color: "var(--text-2)" }}>
+            <p className="mt-2 text-sm leading-5 text-muted-foreground">
               Ask about evidence, rationale, and proposed Approval Pack edits.
             </p>
           </div>
-          <Button
-            type="button"
-            onClick={() => void handleNewThread()}
-            disabled={threadState !== "ready" || creatingThread}
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-          >
-            {creatingThread ? <LoaderCircle data-icon="inline-start" className="h-3.5 w-3.5 animate-spin" /> : <MessageSquarePlus data-icon="inline-start" className="h-3.5 w-3.5" />}
-            New Chat
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              type="button"
+              onClick={() => void handleNewThread()}
+              disabled={threadState !== "ready" || creatingThread}
+              variant="outline"
+              size="sm"
+            >
+              {creatingThread ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : <MessageSquarePlus data-icon="inline-start" />}
+              New Chat
+            </Button>
+            {onClose ? (
+              <Button type="button" onClick={onClose} aria-label="Close Approval Copilot" variant="ghost" size="icon-sm">
+                <X data-icon="inline-start" />
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
 
       {threads.length > 0 ? (
-        <div className="flex gap-2 overflow-x-auto border-b p-3" style={{ borderColor: "var(--line)" }}>
+        <div className="flex gap-2 overflow-x-auto border-b border-border/70 p-3">
           {threads.map((thread, index) => (
             <button
               key={`${thread.thread_id}-${index}`}
               type="button"
               onClick={() => setActiveThreadId(thread.thread_id)}
-              className="max-w-[180px] shrink-0 rounded-lg border px-3 py-2 text-left text-xs transition-colors"
-              style={{
-                borderColor: activeThreadId === thread.thread_id ? "var(--invert)" : "var(--line)",
-                background: activeThreadId === thread.thread_id ? "var(--invert)" : "var(--bg)",
-                color: activeThreadId === thread.thread_id ? "var(--invert-fg)" : "var(--text-2)",
-              }}
+              className={cn(
+                "max-w-[180px] shrink-0 rounded-lg border px-3 py-2 text-left text-xs transition-colors",
+                activeThreadId === thread.thread_id
+                  ? "border-primary/30 bg-primary/10 text-foreground"
+                  : "border-border/70 bg-background/70 text-muted-foreground hover:text-foreground",
+              )}
             >
               <span className="block truncate">{formatThreadTitle(thread, index)}</span>
             </button>
@@ -541,11 +556,11 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
         </div>
       ) : null}
 
-      <div className="flex h-[620px] max-h-[72vh] flex-col md:h-[680px] xl:sticky xl:top-5">
+      <div className="flex min-h-0 flex-1 flex-col">
         <ScrollArea className="min-h-0 flex-1">
           <div className="p-4">
           {threadState === "loading" ? (
-            <div className="flex h-full items-center justify-center text-sm" style={{ color: "var(--text-3)" }}>
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
               <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
               Loading copilot...
             </div>
@@ -596,12 +611,12 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
         </ScrollArea>
 
         {error && threadState === "ready" ? (
-          <div className="border-t px-4 py-2 text-xs" style={{ borderColor: "var(--line)", color: "var(--danger)", background: "var(--danger-bg)" }}>
+          <div className="border-t border-border/70 bg-[var(--danger-bg)] px-4 py-2 text-xs text-[var(--danger)]">
             {error}
           </div>
         ) : null}
 
-        <form onSubmit={(event) => void handleSend(event)} className="border-t p-3" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
+        <form onSubmit={(event) => void handleSend(event)} className="border-t border-border/70 bg-background p-3">
           <label className="sr-only" htmlFor="copilot-message">Message copilot</label>
           <div className="flex items-end gap-2">
             <Textarea
@@ -617,7 +632,7 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
               type="submit"
               disabled={!draft.trim() || threadState !== "ready" || sending}
               size="icon"
-              className="h-10 w-10 rounded-lg"
+              className="size-10 rounded-lg"
               aria-label="Send copilot message"
             >
               {sending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -625,6 +640,6 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
           </div>
         </form>
       </div>
-    </CheckerSurface>
+    </section>
   );
 }

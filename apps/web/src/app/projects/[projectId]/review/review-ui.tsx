@@ -149,43 +149,42 @@ export function ReviewHero({
   const riskStyle = riskTokens(report.overall.risk_level);
 
   return (
-    <section className="relative overflow-hidden" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
+    <section className="relative overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-sm">
       {/* Risk-colored top accent bar */}
       <div className="h-1" style={{ background: findingLeftColor(report.overall.risk_level === "HIGH" ? "NON_COMPLIANT" : report.overall.risk_level === "MEDIUM" ? "PARTIAL" : "COMPLIANT") }} />
 
-      <div className="px-6 py-7 md:px-8 md:py-8">
-        <div className="relative z-10 grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_340px]">
+      <div className="px-5 py-5 md:px-6 md:py-6">
+        <div className="relative z-10 grid gap-5 2xl:grid-cols-[minmax(0,1.6fr)_320px]">
           <div>
             <div
-              className="inline-flex items-center gap-2 px-3 py-1.5 text-[11px] uppercase tracking-[0.2em]"
-              style={{ border: '1px solid var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
+              className="inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground"
             >
               <Sparkles className="h-3.5 w-3.5" />
-              Final Review Report
+              Detailed findings
             </div>
-            <h2 className="mt-5 max-w-4xl text-3xl font-semibold leading-tight md:text-[2.6rem] md:leading-[1.15]" style={{ color: 'var(--text)' }}>
+            <h2 className="mt-3 max-w-4xl text-2xl font-semibold leading-tight text-foreground md:text-3xl">
               {report.overall.summary}
             </h2>
-            <p className="mt-5 max-w-4xl text-[15px] leading-7" style={{ color: 'var(--text-2)' }}>{report.risk_rationale}</p>
+            <p className="mt-3 max-w-4xl text-sm leading-7 text-muted-foreground">{report.risk_rationale}</p>
           </div>
 
           <div className="grid gap-3">
-            <div className="border px-5 py-5" style={{ ...riskStyle, borderColor: riskStyle.borderColor }}>
+            <div className="rounded-xl border px-5 py-5" style={{ ...riskStyle, borderColor: riskStyle.borderColor }}>
               <div className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ opacity: 0.75 }}>Overall Risk</div>
               <div className="mt-3 text-3xl font-bold">{report.overall.risk_level}</div>
               <div className="mt-2 text-sm" style={{ opacity: 0.8 }}>Score {Math.round(report.overall.score)}</div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div className="px-4 py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>
+              <div className="rounded-xl border border-border/70 bg-muted/30 px-4 py-4">
+                <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                   <Clock3 className="h-3.5 w-3.5" />
                   Review Time
                 </div>
-                <div className="mt-3 text-xl font-semibold" style={{ color: 'var(--text)' }}>{elapsed}</div>
+                <div className="mt-3 text-xl font-semibold text-foreground">{elapsed}</div>
               </div>
-              <div className="px-4 py-4" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Coverage</div>
-                <div className="mt-3 text-xl font-semibold" style={{ color: 'var(--text)' }}>{report.checks.length} checks</div>
+              <div className="rounded-xl border border-border/70 bg-muted/30 px-4 py-4">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">Coverage</div>
+                <div className="mt-3 text-xl font-semibold text-foreground">{report.checks.length} checks</div>
               </div>
             </div>
           </div>
@@ -217,12 +216,12 @@ export function ReviewReportView({
     <div className="grid gap-6 pb-6">
       <ReviewHero report={report} elapsed={elapsed} />
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
+      <section className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_300px]">
         <div className="grid gap-6">
-          <div className="p-6 md:p-7" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
+          <div className="rounded-xl border border-border/70 bg-card/95 p-5 shadow-sm md:p-6">
             <div className="grid gap-6 md:grid-cols-2">
               <div>
-                <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>
+                <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                   <CheckCircle2 className="h-3.5 w-3.5" style={{ color: 'var(--status-compliant)' }} />
                   Highlights
                 </div>
@@ -235,7 +234,7 @@ export function ReviewReportView({
                 </div>
               </div>
               <div>
-                <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>
+                <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                   <ArrowRight className="h-3.5 w-3.5" style={{ color: 'var(--warning)' }} />
                   Next Actions
                 </div>
@@ -254,8 +253,7 @@ export function ReviewReportView({
             {findings.map((finding, findingIdx) => (
               <article
                 key={finding.check_id}
-                className="border overflow-hidden"
-                style={{ background: 'var(--bg-1)', borderColor: 'var(--line)' }}
+                className="overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-sm"
               >
                 {/* Colored left accent strip */}
                 <div className="flex min-h-0">
@@ -286,7 +284,7 @@ export function ReviewReportView({
                       </div>
                     )}
 
-                <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
+                <div className="mt-6 grid gap-6 2xl:grid-cols-[minmax(0,1fr)_280px]">
                   <div className="grid gap-5">
                     {!!finding.assessment.evidence_quotes.length && (
                       <div>
@@ -379,35 +377,34 @@ export function ReviewReportView({
           </section>
         </div>
 
-        <aside className="grid content-start gap-4 xl:sticky xl:top-0">
-          <div className="p-5" style={{ border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
-            <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>
+        <aside className="grid content-start gap-4 2xl:sticky 2xl:top-0">
+          <div className="rounded-xl border border-border/70 bg-card/95 p-5 shadow-sm">
+            <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
               <FileText className="h-3.5 w-3.5" />
               Report Snapshot
             </div>
             <div className="mt-4 grid gap-3">
-              <div className="px-4 py-3" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Overall Confidence</div>
+              <div className="rounded-xl border border-border/70 bg-background px-4 py-3">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">Overall Confidence</div>
                 <div className="mt-2 text-lg font-semibold" style={{ color: confidenceTokens(Math.round(report.confidence * 100)).color }}>{Math.round(report.confidence * 100)}%</div>
-                <div className="mt-2 h-1.5 w-full overflow-hidden" style={{ background: 'var(--bg-2)' }}>
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
                   <div className="h-full" style={{ width: `${Math.round(report.confidence * 100)}%`, background: confidenceTokens(Math.round(report.confidence * 100)).color }} />
                 </div>
               </div>
-              <div className="px-4 py-3" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Review State</div>
-                <div className="mt-2 text-lg" style={{ color: 'var(--text)' }}>{report.review_state}</div>
+              <div className="rounded-xl border border-border/70 bg-background px-4 py-3">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">Reviewed Criteria</div>
+                <div className="mt-2 text-lg text-foreground">{report.checks.length} checks</div>
               </div>
-              <div className="px-4 py-3" style={{ border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: 'var(--text-3)' }}>Review Required</div>
-                <div className="mt-2 text-lg" style={{ color: 'var(--text)' }}>{report.review_required ? "Yes" : "No"}</div>
+              <div className="rounded-xl border border-border/70 bg-background px-4 py-3">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">Review Required</div>
+                <div className="mt-2 text-lg text-foreground">{report.review_required ? "Yes" : "No"}</div>
               </div>
             </div>
           </div>
 
           <Link
             href={`/vendor-reviews/${projectId}/review`}
-            className="inline-flex items-center justify-between border px-4 py-3 text-sm transition-colors"
-            style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
+            className="inline-flex items-center justify-between rounded-xl border border-border/70 bg-muted/60 px-4 py-3 text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             <span>Back to Review Control</span>
             <ArrowUpRight className="h-4 w-4" />
@@ -428,14 +425,14 @@ export function ReportUnavailable({
   cta?: React.ReactNode;
 }) {
   return (
-    <section className="border px-6 py-8 md:px-8" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}>
+    <section className="rounded-xl border border-border/70 bg-card/95 px-6 py-8 shadow-sm md:px-8">
       <div className="max-w-2xl">
-        <div className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.2em]" style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-3)' }}>
+        <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
           <ShieldAlert className="h-3.5 w-3.5" />
           Final Review
         </div>
-        <h2 className="mt-5 text-2xl font-semibold" style={{ color: 'var(--text)' }}>{title}</h2>
-        <p className="mt-3 text-sm leading-7" style={{ color: 'var(--text-2)' }}>{body}</p>
+        <h2 className="mt-5 text-2xl font-semibold text-foreground">{title}</h2>
+        <p className="mt-3 text-sm leading-7 text-muted-foreground">{body}</p>
         {cta ? <div className="mt-6">{cta}</div> : null}
       </div>
     </section>
@@ -444,7 +441,7 @@ export function ReportUnavailable({
 
 export function ReportLoadError({ message }: { message: string }) {
   return (
-    <div className="flex gap-3 border p-4 text-sm" style={{ borderColor: 'var(--danger)', background: 'var(--danger-bg)', color: 'var(--danger)' }}>
+    <div className="flex gap-3 rounded-xl border border-[var(--danger)] bg-[var(--danger-bg)] p-4 text-sm text-[var(--danger)]">
       <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
       <div>{message}</div>
     </div>
@@ -453,7 +450,7 @@ export function ReportLoadError({ message }: { message: string }) {
 
 export function ReportLoadingState() {
   return (
-    <div className="flex items-center gap-3 border p-6" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)', color: 'var(--text-2)' }}>
+    <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-card/95 p-6 text-muted-foreground shadow-sm">
       <LoaderCircle className="h-4 w-4 animate-spin" />
       Preparing the full review report...
     </div>

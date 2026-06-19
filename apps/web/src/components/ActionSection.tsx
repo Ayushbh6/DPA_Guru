@@ -5,9 +5,8 @@ import { startTransition, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowUpRight, FileText, LoaderCircle, Plus, Search, ShieldCheck } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CheckerPanel, CheckerSurface, SectionHeader, StatusBadge } from "@/components/checker-ui";
 import {
   Dialog,
   DialogContent,
@@ -86,44 +85,39 @@ export default function ActionSection() {
   });
 
   return (
-    <section className="relative z-20 flex w-full flex-col items-center px-5 pb-24 pt-10 text-center md:pb-32">
-      <Card className="premium-panel w-full max-w-4xl py-0">
-        <CardHeader className="items-center px-6 pb-0 pt-10 md:px-12 md:pt-14">
-          <Badge variant="outline" className="rounded-full border-border bg-background px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
-            Begin
-          </Badge>
-          <CardTitle className="mt-5 text-4xl font-semibold tracking-[-0.06em] md:text-6xl">
-            Start a Vendor Review.
-          </CardTitle>
-          <CardDescription className="mt-4 max-w-xl text-base leading-7">
-            Create a Checker workspace, upload the main DPA and supporting documents, then generate review criteria and an Approval Pack.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="px-6 pb-10 pt-8 md:px-12 md:pb-12">
-          <div className="mx-auto flex max-w-md flex-col gap-3 sm:flex-row sm:justify-center">
-            <Button type="button" size="lg" onClick={openCreateModal} className="h-12 flex-1 rounded-2xl px-5">
+    <section className="relative z-20 flex min-h-[calc(100svh-4rem)] w-full flex-col items-center justify-center px-5 pb-10 pt-16 text-center md:py-20">
+      <CheckerSurface className="w-full max-w-5xl p-6 text-left md:p-10">
+        <div className="grid gap-8 md:grid-cols-[1fr_0.72fr] md:items-end">
+          <SectionHeader
+            label="Begin"
+            title="Start a Vendor Review."
+            description="Create a Checker workspace, add the main DPA and supporting documents, then confirm criteria before the Approval Pack."
+          />
+          <div className="flex flex-col gap-3 sm:flex-row md:flex-col">
+            <Button type="button" size="lg" onClick={openCreateModal} className="h-11 rounded-lg px-5">
               <Plus data-icon="inline-start" className="h-4 w-4" />
               Create Review
             </Button>
-            <Button type="button" size="lg" variant="outline" onClick={() => void openModal()} className="h-12 flex-1 rounded-2xl px-5">
+            <Button type="button" size="lg" variant="outline" onClick={() => void openModal()} className="h-11 rounded-lg px-5">
               Open Existing
             </Button>
           </div>
-          <div className="mt-10 grid gap-3 text-left md:grid-cols-3">
+        </div>
+
+        <div className="mt-8 grid gap-3 md:grid-cols-3">
             {[
               ["Evidence-led", "Every finding stays tied to the source material."],
               ["Criteria-first", "Confirm the standard before running the approval pack."],
               ["Human approved", "Proposed edits require explicit user approval."],
             ].map(([title, body]) => (
-              <div key={title} className="premium-subtle p-4">
-                <ShieldCheck className="mb-3 h-4 w-4" style={{ color: "var(--accent)" }} />
-                <div className="text-sm font-medium" style={{ color: "var(--text)" }}>{title}</div>
-                <p className="mt-2 text-sm leading-6" style={{ color: "var(--text-2)" }}>{body}</p>
-              </div>
+              <CheckerPanel key={title} className="p-4">
+                <ShieldCheck className="mb-3 size-4 text-primary" />
+                <div className="text-sm font-medium text-foreground">{title}</div>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
+              </CheckerPanel>
             ))}
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+      </CheckerSurface>
 
       <VendorReviewCreateDialog
         open={createModalOpen}
@@ -136,9 +130,9 @@ export default function ActionSection() {
       />
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-w-2xl rounded-3xl p-0">
+        <DialogContent className="max-w-2xl rounded-xl p-0">
           <DialogHeader className="px-6 pb-2 pt-6">
-            <DialogTitle className="text-2xl tracking-[-0.04em]">Saved reviews</DialogTitle>
+            <DialogTitle className="text-2xl">Saved reviews</DialogTitle>
             <DialogDescription>Open an existing workspace and continue from the latest review state.</DialogDescription>
           </DialogHeader>
           <div className="px-6 pb-4">
@@ -149,13 +143,13 @@ export default function ActionSection() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search reviews..."
-                className="h-11 rounded-2xl pl-9"
+                className="h-10 rounded-lg pl-9"
               />
             </div>
           </div>
-          <ScrollArea className="max-h-[420px] border-t" style={{ borderColor: "var(--line)" }}>
+          <ScrollArea className="max-h-[420px] border-t border-border">
             {loadingProjects ? (
-              <div className="flex items-center gap-3 px-6 py-10 text-sm" style={{ color: "var(--text-2)" }}>
+              <div className="flex items-center gap-3 px-6 py-10 text-sm text-muted-foreground">
                 <LoaderCircle className="h-4 w-4 animate-spin" />
                 Loading saved reviews...
               </div>
@@ -166,27 +160,27 @@ export default function ActionSection() {
                     key={`${project.project_id}-${index}`}
                     href={`/vendor-reviews/${project.vendor_review_id || project.project_id}/dashboard`}
                     onClick={() => setModalOpen(false)}
-                    className="group flex items-center justify-between gap-4 rounded-2xl px-4 py-4 transition-colors hover:bg-muted"
+                    className="group flex items-center justify-between gap-4 rounded-lg px-4 py-4 transition-colors hover:bg-muted"
                   >
                     <div className="flex min-w-0 items-start gap-3">
-                      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
-                        <FileText className="h-4 w-4" style={{ color: "var(--accent)" }} />
+                      <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
+                        <FileText className="size-4 text-primary" />
                       </div>
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-medium" style={{ color: "var(--text)" }}>{project.vendor_name || project.name}</div>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style={{ color: "var(--text-3)" }}>
-                          <span>{statusLabel(project.status)}</span>
+                        <div className="truncate text-sm font-medium text-foreground">{project.vendor_name || project.name}</div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                          <StatusBadge>{statusLabel(project.status)}</StatusBadge>
                           {project.document_filename ? <span className="truncate">{project.document_filename}</span> : null}
                           <span>{formatRelativeDate(project.last_activity_at)}</span>
                         </div>
                       </div>
                     </div>
-                    <ArrowUpRight className="h-4 w-4 shrink-0 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" style={{ color: "var(--text-3)" }} />
+                    <ArrowUpRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
                   </Link>
                 ))}
               </div>
             ) : (
-              <div className="px-6 py-10 text-sm" style={{ color: "var(--text-3)" }}>
+              <div className="px-6 py-10 text-sm text-muted-foreground">
                 {search ? "No matching reviews." : "No saved reviews yet."}
               </div>
             )}

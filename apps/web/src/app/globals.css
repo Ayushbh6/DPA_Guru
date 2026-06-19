@@ -4,14 +4,14 @@
 
 /* ── Light mode (default) ──────────────────── */
 :root {
-  --bg:        #ffffff;
-  --bg-1:      #f7f7f7;
-  --bg-2:      #efefef;
-  --text:      #0a0a0a;
-  --text-2:    #525252;
-  --text-3:    #757575;
-  --line:      #e5e5e5;
-  --line-2:    #d4d4d4;
+  --bg:        #f8fafc;
+  --bg-1:      #ffffff;
+  --bg-2:      #eef2f7;
+  --text:      #101114;
+  --text-2:    #4b5563;
+  --text-3:    #4b5563;
+  --line:      #dfe4ec;
+  --line-2:    #c7d0dc;
   --accent:    #4f46e5;
   --accent-fg: #ffffff;
   --invert:    #0a0a0a;
@@ -74,7 +74,7 @@
   --chart-3: #b45309;
   --chart-4: #b91c1c;
   --chart-5: #525252;
-  --radius: 1.125rem;
+  --radius: 0.5rem;
   --sidebar: var(--bg-1);
   --sidebar-foreground: var(--text);
   --sidebar-primary: var(--invert);
@@ -87,15 +87,15 @@
 
 /* ── Dark mode ─────────────────────────────── */
 [data-theme="dark"] {
-  --bg:        #0a0a0a;
-  --bg-1:      #111111;
-  --bg-2:      #171717;
-  --text:      #f5f5f5;
-  --text-2:    #a1a1a1;
-  --text-3:    #737373;
-  --line:      #1e1e1e;
-  --line-2:    #333333;
-  --accent:    #818cf8;
+  --bg:        #090b10;
+  --bg-1:      #11141b;
+  --bg-2:      #1b202a;
+  --text:      #f4f7fb;
+  --text-2:    #c5ccd8;
+  --text-3:    #b8c2cf;
+  --line:      #28303d;
+  --line-2:    #3a4352;
+  --accent:    #9aa7ff;
   --accent-fg: #ffffff;
   --invert:    #f5f5f5;
   --invert-fg: #0a0a0a;
@@ -170,14 +170,14 @@
   --color-foreground: var(--text);
   --font-sans:        var(--font-outfit);
 
-  --radius-xs:   8px;
-  --radius-sm:   10px;
-  --radius-md:   14px;
-  --radius-lg:   18px;
-  --radius-xl:   22px;
-  --radius-2xl:  28px;
-  --radius-3xl:  34px;
-  --radius-4xl:  42px;
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius-md:   8px;
+  --radius-lg:   8px;
+  --radius-xl:   10px;
+  --radius-2xl:  12px;
+  --radius-3xl:  14px;
+  --radius-4xl:  16px;
   --radius-full: 9999px;
   --font-heading:        var(--font-sans);
   --color-sidebar-ring:        var(--sidebar-ring);
@@ -212,32 +212,42 @@
 }
 
 html, body {
-  background:
-    radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 28rem),
-    linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg-1) 55%, var(--bg)) 100%);
+  background: linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg-1) 34%, var(--bg)) 100%);
   color: var(--text);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  -ms-overflow-style: none;
-  scrollbar-width: none;
   transition: background-color 0.15s ease, color 0.15s ease;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
-::-webkit-scrollbar { display: none; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-3) 32%, transparent);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
 
-/* Subtle radius on interactive elements — premium touch */
+/* Quiet console controls should stay crisp across components. */
 input, textarea, select,
 button:not([class*="border-b"]),
 [role="combobox"], [role="listbox"] {
-  border-radius: 14px;
+  border-radius: 8px;
 }
 
 /* Placeholder color */
 ::placeholder {
   color: var(--text-3);
   opacity: 0.8;
+}
+
+button:disabled,
+input:disabled,
+textarea:disabled,
+[aria-disabled="true"] {
+  opacity: 0.72 !important;
 }
 
 /* Subtle noise overlay */
@@ -255,21 +265,21 @@ body::after {
   .premium-panel {
     background: color-mix(in srgb, var(--bg-1) 90%, var(--bg));
     border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
-    border-radius: var(--radius-3xl);
-    box-shadow: 0 28px 80px color-mix(in srgb, #000 10%, transparent);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 18px 44px color-mix(in srgb, #000 9%, transparent);
   }
 
   .premium-card {
     background: var(--bg);
     border: 1px solid var(--line);
-    border-radius: var(--radius-2xl);
-    box-shadow: 0 12px 34px color-mix(in srgb, #000 7%, transparent);
+    border-radius: var(--radius-md);
+    box-shadow: 0 10px 24px color-mix(in srgb, #000 6%, transparent);
   }
 
   .premium-subtle {
     background: var(--bg-2);
     border: 1px solid var(--line);
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-md);
   }
 
   .premium-focus {

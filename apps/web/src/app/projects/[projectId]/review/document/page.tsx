@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, LoaderCircle, TriangleAlert } from "lucide-react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
+import { Button } from "@/components/checker-ui";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { getDocumentProxyUrl } from "@/lib/uploadApi";
 import { useProject } from "../../ProjectProvider";
 
@@ -117,7 +119,7 @@ export default function ReviewDocumentViewerPage() {
 
   if (!document) {
     return (
-      <section className="border px-6 py-8" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)', color: 'var(--text-2)' }}>
+      <section className="rounded-xl border border-border bg-card px-6 py-8 text-muted-foreground">
         No document was found.
       </section>
     );
@@ -139,33 +141,31 @@ export default function ReviewDocumentViewerPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-3">
-            <button
+            <Button
               type="button"
               onClick={() => canGoPrev && setCurrentPage((page) => Math.max(1, page - 1))}
               disabled={!canGoPrev}
-              className="inline-flex items-center gap-2 border px-4 py-2.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-              style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
+              variant="outline"
+              size="lg"
+              className="h-10 px-4"
             >
               <ChevronLeft className="h-4 w-4" />
               Previous
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={() => canGoNext && setCurrentPage((page) => page + 1)}
               disabled={!canGoNext}
-              className="inline-flex items-center gap-2 border px-4 py-2.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-              style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
+              variant="outline"
+              size="lg"
+              className="h-10 px-4"
             >
               Next
               <ChevronRight className="h-4 w-4" />
-            </button>
-            <Link
-              href={`/vendor-reviews/${projectId}/review/report`}
-              className="inline-flex items-center gap-2 border px-4 py-2.5 text-sm transition-colors"
-              style={{ borderColor: 'var(--line)', background: 'var(--bg-2)', color: 'var(--text-2)' }}
-            >
+            </Button>
+            <Button render={<Link href={`/vendor-reviews/${projectId}/review/report`} />} variant="outline" size="lg" className="h-10 px-4">
               Back to Report
-            </Link>
+            </Button>
           </div>
         </div>
       </section>
@@ -178,15 +178,15 @@ export default function ReviewDocumentViewerPage() {
       ) : null}
 
       {error ? (
-        <div className="flex gap-3 border border-red-400/20 bg-red-400/6 p-4 text-sm text-red-100/85">
+        <Alert variant="destructive" className="border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)]">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>{error}</div>
-        </div>
+          <AlertDescription className="text-[var(--danger)]">{error}</AlertDescription>
+        </Alert>
       ) : null}
 
       <section className="overflow-auto border px-6 py-6" style={{ borderColor: 'var(--line)', background: 'var(--bg-1)' }}>
-        <div className="mx-auto w-fit bg-white p-3 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
-          <canvas ref={canvasRef} />
+        <div className="mx-auto w-fit max-w-full bg-white p-3 shadow-[0_20px_80px_rgba(0,0,0,0.30)]">
+          <canvas ref={canvasRef} className="block h-auto max-w-full" />
         </div>
       </section>
     </div>

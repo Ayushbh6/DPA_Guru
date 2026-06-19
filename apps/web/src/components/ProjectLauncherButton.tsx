@@ -1,11 +1,11 @@
 "use client";
 
-import { startTransition, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LoaderCircle, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 
-import { createVendorReview } from "@/lib/uploadApi";
 import { useAuth } from "@/components/AuthProvider";
+import VendorReviewCreateDialog from "@/components/VendorReviewCreateDialog";
 
 type Props = {
   className?: string;
@@ -20,48 +20,32 @@ export default function ProjectLauncherButton({
 }: Props) {
   const router = useRouter();
   const { user } = useAuth();
-  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
 
   async function handleClick() {
     if (!user) {
       router.push("/login");
       return;
     }
-    if (loading) return;
-    setLoading(true);
-    try {
-      const vendorName = prompt("Vendor name:");
-      if (!vendorName?.trim()) return;
-      const intendedUseCase = prompt("Intended use case:");
-      if (!intendedUseCase?.trim()) return;
-      const project = await createVendorReview({
-        vendor_name: vendorName.trim(),
-        intended_use_case: intendedUseCase.trim(),
-        shares_personal_data: true,
-        business_criticality: "medium",
-        name: `${vendorName.trim()} Vendor Review`,
-      });
-      startTransition(() => {
-        router.push(project.workspace_url || `/vendor-reviews/${project.vendor_review_id || project.project_id}/dashboard`);
-      });
-    } finally {
-      setLoading(false);
-    }
+    setOpen(true);
   }
 
   return (
-    <button type="button" onClick={handleClick} disabled={loading} className={className}>
-      {loading ? (
-        <>
-          <LoaderCircle className="h-4 w-4 animate-spin" />
-          <span>Creating Review</span>
-        </>
-      ) : (
+    <>
+      <button type="button" onClick={handleClick} className={className}>
         <>
           {icon && <Plus className="h-4 w-4" />}
           <span>{label}</span>
         </>
-      )}
-    </button>
+      </button>
+      <VendorReviewCreateDialog
+        open={open}
+        onOpenChange={setOpen}
+        onCreated={(project) => {
+          setOpen(false);
+          router.push(project.workspace_url || `/vendor-reviews/${project.vendor_review_id || project.project_id}/dashboard`);
+        }}
+      />
+    </>
   );
 }

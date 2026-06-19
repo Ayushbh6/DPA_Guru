@@ -7,20 +7,19 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { Button } from "@/components/ui/button";
 
+function getInitialDarkMode() {
+  if (typeof window === "undefined") return true;
+  const stored = window.localStorage.getItem("theme");
+  return stored ? stored === "dark" : true;
+}
+
 function formatDisplayName(username: string) {
   if (!username) return "";
   return username.charAt(0).toUpperCase() + username.slice(1).toLowerCase();
 }
 
 function ThemeToggle() {
-  const [dark, setDark] = useState(true);
-
-  useEffect(() => {
-    const stored = localStorage.getItem("theme");
-    const isDark = stored ? stored === "dark" : true;
-    setDark(isDark);
-    document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
-  }, []);
+  const [dark, setDark] = useState(getInitialDarkMode);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");

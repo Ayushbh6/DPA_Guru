@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { FileText, LoaderCircle, Sparkles, WandSparkles, X } from "lucide-react";
-import { motion } from "framer-motion";
+import { Button, CheckerPanel, CheckerSurface, MetricTile, SectionHeader, StatusBadge } from "@/components/checker-ui";
+import { Progress, ProgressIndicator, ProgressTrack } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
 import { cancelChecklistDraft, createVendorCriteriaDraft } from "@/lib/uploadApi";
 import { useProject } from "../ProjectProvider";
 
@@ -108,141 +110,144 @@ export default function SetupChecklistPage() {
 
   if (!parseReady) {
     return (
-      <div className="border p-8" style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}>
-        <h2 className="text-xl" style={{ color: "var(--text)" }}>Documents Not Ready</h2>
-        <p className="mt-2" style={{ color: "var(--text-2)" }}>
-          Upload one primary Main DPA and wait for every active document to finish parsing before generating criteria.
-        </p>
-      </div>
+      <CheckerSurface className="p-6 md:p-8">
+        <SectionHeader
+          label="Criteria"
+          title="Documents not ready"
+          description="Upload one primary Main DPA and wait for every active document to finish parsing before generating criteria."
+        />
+      </CheckerSurface>
     );
   }
 
   return (
     <div className="grid gap-6 pb-6">
-      <section className="border p-4 md:p-7" style={{ background: "var(--bg-1)", borderColor: "var(--line)" }}>
-        <div className="flex items-center gap-3">
-          <Sparkles className="h-5 w-5" style={{ color: "var(--text-2)" }} />
-          <div>
-            <div className="text-sm font-medium md:text-base" style={{ color: "var(--text)" }}>Standard Vendor DPA Criteria</div>
-            <div className="text-xs md:text-sm" style={{ color: "var(--text-3)" }}>
-              Checker applies the default vendor DPA profile and all active knowledge-base sources automatically.
-            </div>
-          </div>
-        </div>
+      <CheckerSurface className="p-4 md:p-7">
+        <SectionHeader
+          label="Criteria"
+          title={
+            <span className="inline-flex items-center gap-3">
+              <Sparkles className="h-5 w-5 text-muted-foreground" />
+              Standard Vendor DPA Criteria
+            </span>
+          }
+          description="Checker applies the default vendor DPA profile and all active knowledge-base sources automatically."
+        />
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          <div className="border p-4" style={{ borderColor: "var(--line)", background: "var(--bg-2)" }}>
-            <div className="text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Active Documents</div>
-            <div className="mt-2 text-xl font-semibold" style={{ color: "var(--text)" }}>{activeDocuments.length}</div>
-          </div>
-          <div className="border p-4" style={{ borderColor: "var(--line)", background: "var(--bg-2)" }}>
-            <div className="text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Primary DPA</div>
-            <div className="mt-2 truncate text-sm" style={{ color: "var(--text)" }}>{document.filename}</div>
-          </div>
-          <div className="border p-4" style={{ borderColor: "var(--line)", background: "var(--bg-2)" }}>
-            <div className="text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Profile</div>
-            <div className="mt-2 text-sm" style={{ color: "var(--text)" }}>Standard Vendor DPA</div>
-          </div>
+          <MetricTile label="Active Documents" value={activeDocuments.length} tone="accent" />
+          <MetricTile label="Primary DPA" value={<span className="block truncate text-sm">{document.filename}</span>} />
+          <MetricTile label="Profile" value="Standard Vendor DPA" />
         </div>
-      </section>
+      </CheckerSurface>
 
-      <section className="border p-4 md:p-7" style={{ background: "var(--bg-1)", borderColor: "var(--line)" }}>
-        <div className="mb-4 flex items-center gap-3">
-          <WandSparkles className="h-5 w-5" style={{ color: "var(--text-2)" }} />
-          <div>
-            <div className="text-sm font-medium md:text-base" style={{ color: "var(--text)" }}>Optional Criteria Instructions</div>
-            <div className="text-xs md:text-sm" style={{ color: "var(--text-3)" }}>Strong preference only. Checker will not invent unsupported obligations.</div>
-          </div>
-        </div>
-        <textarea
+      <CheckerSurface className="p-4 md:p-7">
+        <SectionHeader
+          title={
+            <span className="inline-flex items-center gap-3">
+              <WandSparkles className="h-5 w-5 text-muted-foreground" />
+              Optional Criteria Instructions
+            </span>
+          }
+          description="Strong preference only. Checker will not invent unsupported obligations."
+        />
+        <Textarea
           value={effectiveInstruction}
           onChange={(event) => setInstructionOverride(event.target.value)}
           placeholder='Example: "Emphasize subprocessors, audit rights, and breach notice language."'
-          className="min-h-[140px] w-full resize-y border px-4 py-3 text-sm outline-none"
-          style={{ borderColor: "var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
+          className="mt-5 min-h-[140px] resize-y rounded-lg bg-background px-4 py-3 text-sm"
         />
-      </section>
+      </CheckerSurface>
 
       {checklistDraft && (
-        <section className="border p-4 md:p-7" style={{ background: "var(--bg-1)", borderColor: "var(--line)" }}>
+        <CheckerSurface className="p-4 md:p-7">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
-              <div className="text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>Criteria Generation</div>
+              <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Criteria Generation</div>
               <div className="mt-2 flex items-center gap-3">
                 {checklistDraft.status === "COMPLETED" ? (
-                  <Sparkles className="h-5 w-5 text-emerald-300" />
+                  <Sparkles className="h-5 w-5 text-[var(--success)]" />
                 ) : checklistDraft.status === "FAILED" ? (
-                  <X className="h-5 w-5 text-red-300" />
+                  <X className="h-5 w-5 text-[var(--danger)]" />
                 ) : (
-                  <LoaderCircle className="h-5 w-5 animate-spin" style={{ color: "var(--text-2)" }} />
+                  <LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" />
                 )}
-                <h2 className="text-xl" style={{ color: "var(--text)" }}>{formatChecklistStage(checklistDraft.stage)}</h2>
+                <h2 className="text-xl font-semibold text-foreground">{formatChecklistStage(checklistDraft.stage)}</h2>
+                <StatusBadge
+                  tone={
+                    checklistDraft.status === "COMPLETED"
+                      ? "success"
+                      : checklistDraft.status === "FAILED"
+                        ? "danger"
+                        : "accent"
+                  }
+                >
+                  {checklistDraft.status}
+                </StatusBadge>
               </div>
-              <p className="mt-3 max-w-3xl text-sm" style={{ color: "var(--text-3)" }}>{checklistDraft.message || "Preparing your criteria."}</p>
+              <p className="mt-3 max-w-3xl text-sm text-muted-foreground">{checklistDraft.message || "Preparing your criteria."}</p>
               {formatChecklistMeta(checklistDraft.meta) && (
-                <p className="mt-2 max-w-3xl text-xs uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>
+                <p className="mt-2 max-w-3xl text-xs uppercase tracking-[0.14em] text-muted-foreground">
                   {formatChecklistMeta(checklistDraft.meta)}
                 </p>
               )}
             </div>
           </div>
 
-          <div className="mt-6 border p-4" style={{ borderColor: "var(--line)", background: "var(--bg-2)" }}>
-            <div className="flex items-center justify-between text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
+          <CheckerPanel className="mt-6 p-4">
+            <div className="flex items-center justify-between text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
               <span>Progress</span>
               <span>{Math.max(0, Math.min(100, checklistDraft.progress_pct || 0))}%</span>
             </div>
-            <div className="mt-3 h-[6px] overflow-hidden" style={{ background: "var(--line)" }}>
-              <motion.div
-                initial={false}
-                animate={{ width: `${Math.max(2, Math.min(100, checklistDraft.progress_pct || 0))}%` }}
-                transition={{ duration: 0.35, ease: "easeOut" }}
-                className="h-full"
-                style={{ background: "var(--accent)" }}
-              />
-            </div>
-          </div>
-        </section>
+            <Progress className="mt-3" value={Math.max(0, Math.min(100, checklistDraft.progress_pct || 0))}>
+              <ProgressTrack>
+                <ProgressIndicator />
+              </ProgressTrack>
+            </Progress>
+          </CheckerPanel>
+        </CheckerSurface>
       )}
 
-      <div className="-mx-4 mt-4 border-t px-4 py-4 md:sticky md:bottom-0 md:z-20 md:-mx-8 md:px-8 md:py-5 md:backdrop-blur-xl" style={{ borderColor: "var(--line)", background: "color-mix(in srgb, var(--bg) 96%, transparent)" }}>
+      <div className="-mx-4 mt-4 border-t border-border bg-background/95 px-4 py-4 backdrop-blur md:sticky md:bottom-0 md:z-20 md:-mx-8 md:px-8 md:py-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3 text-sm">
-            <FileText className="h-4 w-4" style={{ color: "var(--text-3)" }} />
-            <span style={{ color: "var(--text-2)" }}>Active parsed documents and the default criteria profile will be used.</span>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">Active parsed documents and the default criteria profile will be used.</span>
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             {isGenerating && checklistDraft?.checklist_draft_id && (
-              <button
+              <Button
                 type="button"
                 onClick={() => void handleStopCriteria()}
                 disabled={isStopping}
-                className="border px-4 py-2 text-sm transition-colors"
-                style={{ borderColor: "var(--line)", color: "var(--text-2)" }}
+                variant="outline"
+                size="lg"
+                className="h-10 px-4"
               >
                 {isStopping ? "Stopping Run" : "Stop Run"}
-              </button>
+              </Button>
             )}
             {checklistDraft?.status === "COMPLETED" && (
-              <button
+              <Button
                 type="button"
                 onClick={() => router.push(`/vendor-reviews/${projectId}/checklist/result`)}
-                className="border px-4 py-2 text-sm transition-colors"
-                style={{ borderColor: "var(--line)", color: "var(--text-2)" }}
+                variant="outline"
+                size="lg"
+                className="h-10 px-4"
               >
                 View Criteria
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               type="button"
               disabled={!!isGenerating || !document?.document_id}
               onClick={() => void handleGenerateCriteria()}
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium disabled:opacity-60"
-              style={{ background: "var(--invert)", color: "var(--invert-fg)" }}
+              size="lg"
+              className="h-10 px-5"
             >
               {isGenerating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               {isGenerating ? "Generating Criteria" : checklistDraft ? "Regenerate Criteria" : "Generate Criteria"}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

@@ -1,5 +1,4 @@
 import {
-  AlignmentType,
   BorderStyle,
   Document,
   HeadingLevel,

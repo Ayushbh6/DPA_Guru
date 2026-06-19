@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { LoaderCircle, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { login } from "@/lib/uploadApi";
@@ -35,15 +36,15 @@ export default function LoginForm({ nextPath }: { nextPath: string }) {
   }
 
   return (
-    <Card className="premium-panel w-full max-w-md py-0">
+    <Card className="w-full max-w-md rounded-xl border-border bg-card py-0 text-card-foreground shadow-sm">
       <CardHeader className="px-7 pt-8">
-        <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
-          <ShieldCheck className="h-5 w-5" style={{ color: "var(--accent)" }} />
+        <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-background text-primary">
+          <ShieldCheck className="h-5 w-5" />
         </div>
-        <div className="text-[11px] uppercase tracking-[0.28em]" style={{ color: "var(--accent)" }}>
+        <div className="text-[11px] uppercase tracking-[0.28em] text-primary">
           Private Alpha
         </div>
-        <CardTitle className="mt-2 text-3xl tracking-[-0.055em]">Log in to Checker</CardTitle>
+        <CardTitle className="mt-2 text-3xl">Log in to Checker</CardTitle>
         <CardDescription className="leading-6">
           Use the tester credentials you were given to access the Vendor Review workspace.
         </CardDescription>
@@ -51,35 +52,35 @@ export default function LoginForm({ nextPath }: { nextPath: string }) {
       <CardContent className="px-7 pb-8">
         <form onSubmit={handleSubmit} suppressHydrationWarning className="grid gap-5">
           <label className="grid gap-2 text-sm">
-            <span style={{ color: "var(--text-2)" }}>Username</span>
+            <span className="text-muted-foreground">Username</span>
             <Input
               suppressHydrationWarning
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               autoComplete="username"
-              className="h-12 rounded-2xl bg-background px-4"
+              className="h-12 rounded-lg bg-background px-4"
             />
           </label>
 
           <label className="grid gap-2 text-sm">
-            <span style={{ color: "var(--text-2)" }}>Password</span>
+            <span className="text-muted-foreground">Password</span>
             <Input
               suppressHydrationWarning
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="current-password"
-              className="h-12 rounded-2xl bg-background px-4"
+              className="h-12 rounded-lg bg-background px-4"
             />
           </label>
 
           {error ? (
-            <div className="rounded-2xl border px-4 py-3 text-sm" style={{ borderColor: "var(--danger)", background: "var(--danger-bg)", color: "var(--danger)" }}>
-              {error}
-            </div>
+            <Alert variant="destructive" className="border-destructive/30 bg-[var(--danger-bg)]">
+              <AlertDescription className="text-[var(--danger)]">{error}</AlertDescription>
+            </Alert>
           ) : null}
 
-          <Button type="submit" disabled={submitting || !username.trim() || !password} className="h-12 rounded-2xl">
+          <Button type="submit" disabled={submitting || !username.trim() || !password} className="h-12 rounded-lg">
             {submitting ? <LoaderCircle data-icon="inline-start" className="h-4 w-4 animate-spin" /> : null}
             {submitting ? "Signing in..." : "Log in"}
           </Button>

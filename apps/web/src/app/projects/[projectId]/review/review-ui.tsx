@@ -307,10 +307,7 @@ export function ReviewReportView({
                                     href={getProjectDocumentViewerUrl(projectId, supportsPageJump ? quote.page : undefined)}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.18em] transition-colors"
-                                    style={{ color: 'var(--text-3)' }}
-                                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-2)')}
-                                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
+                                    className="inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground transition-colors hover:text-foreground"
                                   >
                                     Open in DPA
                                     <ArrowUpRight className="h-3 w-3" />

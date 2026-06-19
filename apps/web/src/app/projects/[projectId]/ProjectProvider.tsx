@@ -74,6 +74,15 @@ export function ProjectProvider({
   const pollProjectRefresh = useEffectEvent(() => {
     void refreshProject(false);
   });
+  const connectUploadSocketEvent = useEffectEvent((jobId: string) => {
+    connectUploadSocket(jobId);
+  });
+  const connectChecklistSocketEvent = useEffectEvent((draftId: string) => {
+    connectChecklistSocket(draftId);
+  });
+  const connectAnalysisSocketEvent = useEffectEvent((runId: string) => {
+    connectAnalysisSocket(runId);
+  });
 
   async function refreshSidebar() {
     try {
@@ -174,25 +183,25 @@ export function ProjectProvider({
 
   // Auto-connect websockets if jobs are active (survives page refresh)
   useEffect(() => {
-    if (parseJob && !["COMPLETED", "FAILED"].includes(parseJob.status)) {
+    if (parseJob?.job_id && !["COMPLETED", "FAILED"].includes(parseJob.status)) {
       if (!uploadSocketRef.current || uploadSocketRef.current.readyState === WebSocket.CLOSED) {
-        connectUploadSocket(parseJob.job_id);
+        connectUploadSocketEvent(parseJob.job_id);
       }
     }
   }, [parseJob?.job_id, parseJob?.status]);
 
   useEffect(() => {
-    if (checklistDraft && !["COMPLETED", "FAILED"].includes(checklistDraft.status)) {
+    if (checklistDraft?.checklist_draft_id && !["COMPLETED", "FAILED"].includes(checklistDraft.status)) {
       if (!checklistSocketRef.current || checklistSocketRef.current.readyState === WebSocket.CLOSED) {
-        connectChecklistSocket(checklistDraft.checklist_draft_id);
+        connectChecklistSocketEvent(checklistDraft.checklist_draft_id);
       }
     }
   }, [checklistDraft?.checklist_draft_id, checklistDraft?.status]);
 
   useEffect(() => {
-    if (analysisRun && !["COMPLETED", "FAILED"].includes(analysisRun.status)) {
+    if (analysisRun?.analysis_run_id && !["COMPLETED", "FAILED"].includes(analysisRun.status)) {
       if (!analysisSocketRef.current || analysisSocketRef.current.readyState === WebSocket.CLOSED) {
-        connectAnalysisSocket(analysisRun.analysis_run_id);
+        connectAnalysisSocketEvent(analysisRun.analysis_run_id);
       }
     }
   }, [analysisRun?.analysis_run_id, analysisRun?.status]);

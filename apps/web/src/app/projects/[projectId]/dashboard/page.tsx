@@ -1,8 +1,31 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Archive, BookOpen, FileText, Hash, LoaderCircle, RotateCcw, Star, Trash2, Type, Upload, X } from "lucide-react";
-import { motion } from "framer-motion";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { Archive, ChevronDown, LoaderCircle, RotateCcw, Star, Trash2, Upload, X } from "lucide-react";
+import {
+  CheckboxChip,
+  CheckerPanel,
+  CheckerSurface,
+  FormGrid,
+  MetricTile,
+  SectionHeader,
+  SelectField,
+  StatusBadge,
+  SwitchRow,
+} from "@/components/checker-ui";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
 import {
   archiveVendorDocument,
   createVendorDocumentUpload,
@@ -114,12 +137,6 @@ function formatParseStage(stage: string | undefined) {
   return PARSE_STAGE_LABELS[stage] || stage.replaceAll("_", " ");
 }
 
-function parseStatusStyle(status: string): CSSProperties {
-  if (status === "COMPLETED") return { color: "var(--status-compliant)", background: "var(--status-compliant-bg)" };
-  if (status === "FAILED") return { color: "var(--status-noncompliant)", background: "var(--status-noncompliant-bg)" };
-  return { color: "var(--status-partial)", background: "var(--status-partial-bg)" };
-}
-
 function formatStatus(status: string | null | undefined) {
   return (status || "UNKNOWN").replaceAll("_", " ");
 }
@@ -156,6 +173,8 @@ export default function DashboardPage() {
   const [parsedTextError, setParsedTextError] = useState<string | null>(null);
   const [contextDraft, setContextDraft] = useState<ReviewContextDraft>(() => contextDraftFromDetail(null));
   const [savingContext, setSavingContext] = useState(false);
+  const [deleteDocument, setDeleteDocument] = useState<ProjectDocumentSummary | null>(null);
+  const [parsedTextOpen, setParsedTextOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const documents = useMemo(() => {
@@ -164,9 +183,12 @@ export default function DashboardPage() {
   }, [detail?.document, detail?.documents]);
   const primaryDocument = documents.find((doc) => doc.is_primary) || detail?.document || documents[0] || null;
   const parseJob = detail?.parse_job;
+  const syncContextDraft = useEffectEvent(() => {
+    setContextDraft(contextDraftFromDetail(detail));
+  });
 
   useEffect(() => {
-    setContextDraft(contextDraftFromDetail(detail));
+    syncContextDraft();
   }, [detail?.project.project_id, detail?.vendor_context]);
 
   useEffect(() => {
@@ -337,186 +359,159 @@ export default function DashboardPage() {
     )?.document_id;
   }
 
+  async function confirmHardDeleteDocument() {
+    if (!projectId || !deleteDocument) return;
+    const document = deleteDocument;
+    const replacementId = replacementFor(document);
+    setDeleteDocument(null);
+    await runDocumentAction(document.document_id, () =>
+      hardDeleteVendorDocument(projectId, document.document_id, document.is_primary ? replacementId : null),
+    );
+  }
+
   return (
     <div className="grid gap-4 md:gap-6">
       {uploadError && (
-        <div className="border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-500">
-          {uploadError}
-        </div>
+        <Alert variant="destructive">
+          <AlertDescription>{uploadError}</AlertDescription>
+        </Alert>
       )}
 
-      <section className="p-5 md:p-7" style={{ background: "var(--bg-1)" }}>
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-          <div>
-            <div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>Vendor Context</div>
-            <h2 className="mt-3 text-2xl font-semibold tracking-tight" style={{ color: "var(--text)" }}>
-              {detail?.vendor_context?.vendor_name || detail?.project.vendor_name || detail?.project.name}
-            </h2>
-            <p className="mt-3 max-w-3xl text-sm leading-7" style={{ color: "var(--text-2)" }}>
-              {detail?.vendor_context?.intended_use_case || detail?.project.intended_use_case || "Complete the use case before running final review."}
-            </p>
-          </div>
+      <CheckerSurface className="p-5 md:p-7">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(260px,0.85fr)]">
+          <SectionHeader
+            label="Vendor context"
+            title={detail?.vendor_context?.vendor_name || detail?.project.vendor_name || detail?.project.name}
+            description={detail?.vendor_context?.intended_use_case || detail?.project.intended_use_case || "Complete the use case before running final review."}
+          />
           <div className="grid grid-cols-2 gap-3">
-            <div className="p-3" style={{ background: "var(--bg-2)" }}>
-              <div className="text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Documents</div>
-              <div className="mt-2 text-xl font-semibold" style={{ color: "var(--text)" }}>{documents.filter((doc) => doc.lifecycle_status === "active").length}</div>
-            </div>
-            <div className="p-3" style={{ background: "var(--bg-2)" }}>
-              <div className="text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Criticality</div>
-              <div className="mt-2 text-sm font-semibold capitalize" style={{ color: "var(--text)" }}>{detail?.vendor_context?.business_criticality || "Incomplete"}</div>
-            </div>
+            <MetricTile label="Documents" value={documents.filter((doc) => doc.lifecycle_status === "active").length} />
+            <MetricTile label="Criticality" value={detail?.vendor_context?.business_criticality || "Incomplete"} tone={contextComplete ? "success" : "warning"} />
           </div>
         </div>
 
-        <div className="mt-6 border-t pt-5" style={{ borderColor: "var(--line)" }}>
-          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>Review Context</div>
-              <div className="mt-2 text-sm" style={{ color: contextComplete ? "var(--status-compliant)" : "var(--status-partial)" }}>
-                {contextComplete ? "Complete for final review" : "Complete these fields before running final review"}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => void saveReviewContext()}
-              disabled={savingContext || !contextComplete}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium transition-opacity disabled:opacity-45"
-              style={{ background: "var(--invert)", color: "var(--invert-fg)" }}
-            >
-              {savingContext ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-              Save Context
-            </button>
-          </div>
+        <div className="mt-6 border-t border-border pt-5">
+          <SectionHeader
+            label="Review context"
+            title={contextComplete ? "Ready for final review" : "Complete the review context"}
+            description="These values drive criteria generation and the final Approval Pack."
+            action={
+              <Button
+                type="button"
+                onClick={() => void saveReviewContext()}
+                disabled={savingContext || !contextComplete}
+                className="h-10 rounded-lg"
+              >
+                {savingContext ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : null}
+                Save Context
+              </Button>
+            }
+          />
 
-          <div className="grid gap-3 lg:grid-cols-2">
-            <label className="block">
-              <span className="mb-1.5 block text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Vendor</span>
-              <input
+          <FormGrid className="mt-5 lg:grid-cols-2">
+            <div className="grid gap-1.5">
+              <label className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Vendor</label>
+              <Input
                 value={contextDraft.vendor_name}
                 onChange={(event) => setContextDraft((current) => ({ ...current, vendor_name: event.target.value }))}
-                className="w-full px-3 py-2.5 text-sm outline-none"
-                style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
+                className="h-10 rounded-lg bg-background"
               />
-            </label>
-            <label className="block">
-              <span className="mb-1.5 block text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Data types</span>
-              <input
+            </div>
+            <div className="grid gap-1.5">
+              <label className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Data types</label>
+              <Input
                 value={contextDraft.data_types}
                 onChange={(event) => setContextDraft((current) => ({ ...current, data_types: event.target.value }))}
                 placeholder="customer_personal_data, employee_personal_data"
-                className="w-full px-3 py-2.5 text-sm outline-none"
-                style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
+                className="h-10 rounded-lg bg-background"
               />
-            </label>
-          </div>
+            </div>
+          </FormGrid>
 
-          <label className="mt-3 block">
-            <span className="mb-1.5 block text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Intended use case</span>
-            <textarea
+          <div className="mt-4 grid gap-1.5">
+            <label className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Intended use case</label>
+            <Textarea
               value={contextDraft.intended_use_case}
               onChange={(event) => setContextDraft((current) => ({ ...current, intended_use_case: event.target.value }))}
               rows={3}
-              className="w-full resize-none px-3 py-2.5 text-sm leading-6 outline-none"
-              style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
+              className="min-h-24 resize-none rounded-lg bg-background text-sm leading-6"
             />
-          </label>
+          </div>
 
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            <label className="block">
-              <span className="mb-1.5 block text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Criticality</span>
-              <select
-                value={contextDraft.business_criticality}
-                onChange={(event) => setContextDraft((current) => ({ ...current, business_criticality: event.target.value as BusinessCriticality }))}
-                className="h-10 w-full px-3 text-sm outline-none"
-                style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
-              >
-                {CONTEXT_CRITICALITY_OPTIONS.map((option) => (
-                  <option key={option} value={option}>{option}</option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-1.5 block text-[11px] uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>Vendor region</span>
-              <select
-                value={contextDraft.vendor_region}
-                onChange={(event) => setContextDraft((current) => ({ ...current, vendor_region: event.target.value as VendorRegion }))}
-                className="h-10 w-full px-3 text-sm outline-none"
-                style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
-              >
-                {CONTEXT_REGION_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="flex items-center gap-2 border px-3 py-2 text-sm" style={{ borderColor: "var(--line)", color: "var(--text-2)" }}>
-                <input
-                  type="checkbox"
-                  checked={contextDraft.processes_eu_personal_data}
-                  onChange={(event) => setContextDraft((current) => ({ ...current, processes_eu_personal_data: event.target.checked }))}
-                />
-                EU data
-              </label>
-              <label className="flex items-center gap-2 border px-3 py-2 text-sm" style={{ borderColor: "var(--line)", color: "var(--text-2)" }}>
-                <input
-                  type="checkbox"
-                  checked={contextDraft.transfers_data_outside_eea}
-                  onChange={(event) => setContextDraft((current) => ({ ...current, transfers_data_outside_eea: event.target.checked }))}
-                />
-                EEA transfer
-              </label>
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <SelectField
+              label="Criticality"
+              value={contextDraft.business_criticality}
+              onValueChange={(business_criticality) => setContextDraft((current) => ({ ...current, business_criticality }))}
+              options={CONTEXT_CRITICALITY_OPTIONS.map((option) => ({ value: option, label: option }))}
+            />
+            <SelectField
+              label="Vendor region"
+              value={contextDraft.vendor_region}
+              onValueChange={(vendor_region) => setContextDraft((current) => ({ ...current, vendor_region }))}
+              options={CONTEXT_REGION_OPTIONS}
+            />
+            <div className="grid gap-2">
+              <SwitchRow
+                id="processes-eu-data"
+                label="EU data"
+                checked={contextDraft.processes_eu_personal_data}
+                onCheckedChange={(processes_eu_personal_data) => setContextDraft((current) => ({ ...current, processes_eu_personal_data }))}
+              />
+              <SwitchRow
+                id="transfers-eea"
+                label="EEA transfer"
+                checked={contextDraft.transfers_data_outside_eea}
+                onCheckedChange={(transfers_data_outside_eea) => setContextDraft((current) => ({ ...current, transfers_data_outside_eea }))}
+              />
             </div>
           </div>
 
-          <div className="mt-3 grid gap-2 sm:grid-cols-5">
+          <div className="mt-4 flex flex-wrap gap-2">
             {CONTEXT_BOOLEAN_FLAGS.map(({ key, label }) => (
-              <label key={key} className="flex min-h-10 items-center gap-2 border px-3 py-2 text-sm" style={{ borderColor: "var(--line)", color: "var(--text-2)" }}>
-                <input
-                  type="checkbox"
-                  checked={contextDraft[key]}
-                  onChange={(event) => setContextDraft((current) => ({ ...current, [key]: event.target.checked }))}
-                />
-                <span className="leading-5">{label}</span>
-              </label>
+              <CheckboxChip
+                key={key}
+                label={label}
+                checked={contextDraft[key]}
+                onCheckedChange={(checked) => setContextDraft((current) => ({ ...current, [key]: checked }))}
+              />
             ))}
           </div>
         </div>
-      </section>
+      </CheckerSurface>
 
-      <section className="p-5 md:p-7" style={{ background: "var(--bg-1)" }}>
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-2xl">
-            <div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>Document Manager</div>
-            <h2 className="mt-3 text-2xl font-semibold tracking-tight" style={{ color: "var(--text)" }}>Upload primary and supporting review documents.</h2>
-            <p className="mt-3 text-sm leading-7" style={{ color: "var(--text-2)" }}>
-              Checker reviews all active parsed documents. One active Main DPA must be marked primary before final review.
-            </p>
-          </div>
-          <div className="w-full max-w-xl">
+      <CheckerSurface className="p-5 md:p-7">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+          <SectionHeader
+            label="Document manager"
+            title="Upload primary and supporting review documents."
+            description="Checker reviews all active parsed documents. One active Main DPA must be marked primary before final review."
+          />
+          <div className="grid gap-3">
             <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
-              <select
+              <SelectField
+                label="Document type"
                 value={documentType}
-                onChange={(event) => setDocumentType(event.target.value as VendorDocumentType)}
-                className="px-3 py-2.5 text-sm outline-none"
-                style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
-              >
-                {DOCUMENT_TYPE_OPTIONS.map((item) => (
-                  <option key={item.value} value={item.value}>{item.label}</option>
-                ))}
-              </select>
-              <input
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-                placeholder="Display name"
-                className="px-3 py-2.5 text-sm outline-none"
-                style={{ border: "1px solid var(--line)", background: "var(--bg-2)", color: "var(--text)" }}
+                onValueChange={setDocumentType}
+                options={DOCUMENT_TYPE_OPTIONS}
               />
+              <div className="grid gap-1.5">
+                <label className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Display name</label>
+                <Input
+                  value={displayName}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  placeholder="Display name"
+                  className="h-10 rounded-lg bg-background"
+                />
+              </div>
             </div>
             {documentType === "main_dpa" && (
-              <label className="mt-3 flex items-center gap-3 text-sm" style={{ color: "var(--text-2)" }}>
-                <input type="checkbox" checked={makePrimary} onChange={(event) => setMakePrimary(event.target.checked)} />
-                Make primary DPA
-              </label>
+              <CheckboxChip
+                label="Make primary DPA"
+                checked={makePrimary}
+                onCheckedChange={setMakePrimary}
+                className="w-fit"
+              />
             )}
             <input
               ref={fileInputRef}
@@ -531,12 +526,11 @@ export default function DashboardPage() {
             />
             <button
               type="button"
-              className="mt-4 flex w-full items-center justify-center gap-3 border border-dashed px-4 py-7 text-sm transition-all"
-              style={{
-                borderColor: isDragging ? "var(--accent)" : "var(--line-2)",
-                background: isDragging ? "color-mix(in srgb, var(--accent) 5%, transparent)" : "var(--bg-2)",
-                color: "var(--text-2)",
-              }}
+              className={`flex w-full items-center justify-center gap-3 rounded-lg border border-dashed px-4 py-7 text-sm transition-colors ${
+                isDragging
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border bg-muted/45 text-muted-foreground hover:bg-muted"
+              }`}
               onClick={() => fileInputRef.current?.click()}
               onDragOver={(event) => {
                 event.preventDefault();
@@ -553,7 +547,7 @@ export default function DashboardPage() {
                 if (file) void handleFile(file);
               }}
             >
-              <Upload className="h-5 w-5" />
+              <Upload className="size-5" />
               <span>Drop PDF/DOCX or click to upload</span>
             </button>
           </div>
@@ -564,155 +558,139 @@ export default function DashboardPage() {
             const isWorking = workingDocumentId === document.document_id;
             const replacementId = replacementFor(document);
             return (
-              <div key={document.document_id} className="border p-4" style={{ borderColor: "var(--line)", background: "var(--bg-2)" }}>
+              <CheckerPanel key={document.document_id} className="p-4">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="break-words text-base font-medium" style={{ color: "var(--text)" }}>{document.display_name || document.filename}</h3>
-                      {document.is_primary && <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]" style={{ background: "var(--status-compliant-bg)", color: "var(--status-compliant)" }}><Star className="h-3 w-3" />Primary</span>}
-                      <span className="px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]" style={{ background: "var(--bg)", color: "var(--text-3)" }}>{documentTypeLabel(document.document_type)}</span>
-                      <span className="px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]" style={parseStatusStyle(document.parse_status || "UNKNOWN")}>{formatStatus(document.parse_status)}</span>
-                      {document.lifecycle_status === "archived" && <span className="px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]" style={{ background: "var(--status-partial-bg)", color: "var(--status-partial)" }}>Archived</span>}
+                      <h3 className="break-words text-base font-medium text-foreground">{document.display_name || document.filename}</h3>
+                      {document.is_primary && <StatusBadge tone="success"><Star className="size-3" />Primary</StatusBadge>}
+                      <StatusBadge>{documentTypeLabel(document.document_type)}</StatusBadge>
+                      <StatusBadge tone={document.parse_status === "COMPLETED" ? "success" : document.parse_status === "FAILED" ? "danger" : "warning"}>{formatStatus(document.parse_status)}</StatusBadge>
+                      {document.lifecycle_status === "archived" && <StatusBadge tone="warning">Archived</StatusBadge>}
                     </div>
-                    <div className="mt-2 text-xs" style={{ color: "var(--text-3)" }}>
+                    <div className="mt-2 text-xs text-muted-foreground">
                       {document.filename} · {formatNumber(document.page_count)} pages · {formatNumber(document.token_count_estimate)} tokens
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {document.lifecycle_status === "active" && document.document_type === "main_dpa" && !document.is_primary && (
-                      <button type="button" disabled={isWorking} onClick={() => void runDocumentAction(document.document_id, () => markVendorDocumentPrimary(projectId, document.document_id))} className="inline-flex items-center gap-2 border px-3 py-2 text-xs" style={{ borderColor: "var(--line)", color: "var(--text-2)" }}>
-                        <Star className="h-3.5 w-3.5" /> Make Primary
-                      </button>
+                      <Button type="button" variant="outline" size="sm" disabled={isWorking} onClick={() => void runDocumentAction(document.document_id, () => markVendorDocumentPrimary(projectId, document.document_id))}>
+                        <Star data-icon="inline-start" /> Make Primary
+                      </Button>
                     )}
                     {document.lifecycle_status === "archived" ? (
-                      <button type="button" disabled={isWorking} onClick={() => void runDocumentAction(document.document_id, () => restoreVendorDocument(projectId, document.document_id))} className="inline-flex items-center gap-2 border px-3 py-2 text-xs" style={{ borderColor: "var(--line)", color: "var(--text-2)" }}>
-                        <RotateCcw className="h-3.5 w-3.5" /> Restore
-                      </button>
+                      <Button type="button" variant="outline" size="sm" disabled={isWorking} onClick={() => void runDocumentAction(document.document_id, () => restoreVendorDocument(projectId, document.document_id))}>
+                        <RotateCcw data-icon="inline-start" /> Restore
+                      </Button>
                     ) : (
-                      <button type="button" disabled={isWorking} onClick={() => void runDocumentAction(document.document_id, () => archiveVendorDocument(projectId, document.document_id, document.is_primary ? replacementId : null))} className="inline-flex items-center gap-2 border px-3 py-2 text-xs" style={{ borderColor: "var(--line)", color: "var(--text-2)" }}>
-                        <Archive className="h-3.5 w-3.5" /> Archive
-                      </button>
+                      <Button type="button" variant="outline" size="sm" disabled={isWorking} onClick={() => void runDocumentAction(document.document_id, () => archiveVendorDocument(projectId, document.document_id, document.is_primary ? replacementId : null))}>
+                        <Archive data-icon="inline-start" /> Archive
+                      </Button>
                     )}
-                    <button
+                    <Button
                       type="button"
+                      variant="destructive"
+                      size="sm"
                       disabled={isWorking}
-                      onClick={() => {
-                        if (confirm(`Hard delete "${document.display_name || document.filename}"? This removes stored document content immediately.`)) {
-                          void runDocumentAction(document.document_id, () => hardDeleteVendorDocument(projectId, document.document_id, document.is_primary ? replacementId : null));
-                        }
-                      }}
-                      className="inline-flex items-center gap-2 border px-3 py-2 text-xs text-red-400"
-                      style={{ borderColor: "rgba(248,113,113,0.35)" }}
+                      onClick={() => setDeleteDocument(document)}
                     >
-                      {isWorking ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Delete
-                    </button>
+                      {isWorking ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : <Trash2 data-icon="inline-start" />}
+                      Delete
+                    </Button>
                   </div>
                 </div>
-              </div>
+              </CheckerPanel>
             );
           }) : (
-            <div className="border border-dashed px-4 py-8 text-sm" style={{ borderColor: "var(--line)", color: "var(--text-3)" }}>
+            <div className="rounded-lg border border-dashed border-border px-4 py-8 text-sm text-muted-foreground">
               No documents uploaded yet.
             </div>
           )}
         </div>
-      </section>
+      </CheckerSurface>
 
       {primaryDocument && (
         <>
-          <section className="overflow-hidden" style={{ background: "var(--bg-1)" }}>
-            <div className="p-4 md:p-6">
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>Primary DPA</div>
-                  <h2 className="mt-2 break-words text-xl font-semibold tracking-tight md:text-2xl" style={{ color: "var(--text)" }}>{primaryDocument.display_name || primaryDocument.filename}</h2>
-                </div>
-              </div>
+          <CheckerSurface className="overflow-hidden p-4 md:p-6">
+            <SectionHeader
+              label="Primary DPA"
+              title={primaryDocument.display_name || primaryDocument.filename}
+            />
 
-              <div className="mt-6 grid grid-cols-2 gap-3 xl:grid-cols-4">
-                <div className="p-3 md:p-4" style={{ background: "var(--bg-2)" }}>
-                  <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>
-                    <FileText className="h-3.5 w-3.5" /> Parse Status
-                  </div>
-                  <div className="mt-2">
-                    <span className="inline-flex items-center border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]" style={parseStatusStyle(primaryDocument.parse_status || "UNKNOWN")}>
-                      {formatStatus(primaryDocument.parse_status)}
-                    </span>
-                  </div>
-                </div>
-                <div className="p-3 md:p-4" style={{ background: "var(--bg-2)" }}>
-                  <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>
-                    <BookOpen className="h-3.5 w-3.5" /> Pages
-                  </div>
-                  <div className="mt-2 text-base font-semibold md:text-lg" style={{ color: "var(--text)" }}>{formatNumber(primaryDocument.page_count)}</div>
-                </div>
-                <div className="p-3 md:p-4" style={{ background: "var(--bg-2)" }}>
-                  <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>
-                    <Hash className="h-3.5 w-3.5" /> Token Estimate
-                  </div>
-                  <div className="mt-2 text-base font-semibold md:text-lg" style={{ color: "var(--text)" }}>{formatNumber(primaryDocument.token_count_estimate)}</div>
-                </div>
-                <div className="p-3 md:p-4" style={{ background: "var(--bg-2)" }}>
-                  <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em]" style={{ color: "var(--text-3)" }}>
-                    <Type className="h-3.5 w-3.5" /> Characters
-                  </div>
-                  <div className="mt-2 text-base font-semibold md:text-lg" style={{ color: "var(--text)" }}>
-                    {loadingParsedText ? "Loading..." : formatNumber(approximateCharacters)}
-                  </div>
-                </div>
-              </div>
+            <div className="mt-6 grid grid-cols-2 gap-3 xl:grid-cols-4">
+              <MetricTile label="Parse status" value={formatStatus(primaryDocument.parse_status)} tone={primaryDocument.parse_status === "COMPLETED" ? "success" : primaryDocument.parse_status === "FAILED" ? "danger" : "warning"} />
+              <MetricTile label="Pages" value={formatNumber(primaryDocument.page_count)} />
+              <MetricTile label="Token estimate" value={formatNumber(primaryDocument.token_count_estimate)} />
+              <MetricTile label="Characters" value={loadingParsedText ? "Loading..." : formatNumber(approximateCharacters)} />
+            </div>
 
-              <details className="mt-5 overflow-hidden border" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
-                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm" style={{ color: "var(--text)", background: "var(--bg)" }}>
-                  Parsed primary DPA text
-                </summary>
-                <div style={{ borderTop: "1px solid var(--line)", background: "var(--bg-2)" }}>
+            <div className="mt-5 overflow-hidden rounded-lg border border-border bg-background">
+              <button
+                type="button"
+                aria-expanded={parsedTextOpen}
+                onClick={() => setParsedTextOpen((open) => !open)}
+                className="flex w-full cursor-pointer items-center justify-between px-4 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted/50"
+              >
+                Parsed primary DPA text
+                <ChevronDown className={`size-4 text-muted-foreground transition-transform ${parsedTextOpen ? "rotate-180" : ""}`} />
+              </button>
+              {parsedTextOpen ? (
+                <div className="border-t border-border bg-muted/35">
                   {loadingParsedText ? (
-                    <div className="flex items-center gap-3 px-4 py-4 text-sm" style={{ color: "var(--text-2)" }}>
-                      <LoaderCircle className="h-4 w-4 animate-spin" /> Loading parsed structure...
+                    <div className="flex items-center gap-3 px-4 py-4 text-sm text-muted-foreground">
+                      <LoaderCircle className="size-4 animate-spin" /> Loading parsed structure...
                     </div>
                   ) : parsedTextError ? (
-                    <div className="px-4 py-4 text-sm" style={{ color: "#fca5a5" }}>{parsedTextError}</div>
+                    <div className="px-4 py-4 text-sm text-destructive">{parsedTextError}</div>
                   ) : (
-                    <pre className="max-h-[50svh] overflow-auto overscroll-contain px-4 py-4 text-xs leading-6 whitespace-pre-wrap md:max-h-[420px]" style={{ color: "var(--text-2)" }}>
+                    <pre className="max-h-[50svh] overflow-auto overscroll-contain px-4 py-4 text-xs leading-6 whitespace-pre-wrap text-muted-foreground md:max-h-[420px]">
                       {parsedText || "No parsed markdown is available for this document yet."}
                     </pre>
                   )}
                 </div>
-              </details>
+              ) : null}
             </div>
-          </section>
+          </CheckerSurface>
 
           {parseJob && parseJob.status !== "COMPLETED" && (
-            <section className="border p-4 md:p-7" style={{ background: "var(--bg-1)", borderColor: "var(--line)" }}>
-              <div>
-                <div className="text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>Document Processing</div>
-                <div className="mt-2 flex items-center gap-3">
-                  {parseJob.status === "FAILED" ? <X className="h-5 w-5 text-red-500" /> : <LoaderCircle className="h-5 w-5 animate-spin" style={{ color: "var(--text-2)" }} />}
-                  <h2 className="text-xl" style={{ color: "var(--text)" }}>{formatParseStage(parseJob.stage)}</h2>
-                </div>
-                <p className="mt-3 max-w-3xl text-sm" style={{ color: "var(--text-3)" }}>{parseJob.message || "Processing the uploaded document."}</p>
-              </div>
+            <CheckerSurface className="p-4 md:p-7">
+              <SectionHeader
+                label="Document processing"
+                title={
+                  <span className="inline-flex items-center gap-3">
+                    {parseJob.status === "FAILED" ? <X className="size-5 text-destructive" /> : <LoaderCircle className="size-5 animate-spin text-muted-foreground" />}
+                    {formatParseStage(parseJob.stage)}
+                  </span>
+                }
+                description={parseJob.message || "Processing the uploaded document."}
+              />
 
-              <div className="mt-6 p-4" style={{ border: "1px solid var(--line)", background: "var(--bg)" }}>
-                <div className="flex items-center justify-between text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
-                  <span>Progress</span>
-                  <span>{Math.max(0, Math.min(100, parseJob.progress_pct || 0))}%</span>
-                </div>
-                <div className="mt-3 h-[4px] overflow-hidden" style={{ background: "var(--bg-2)" }}>
-                  <motion.div
-                    initial={false}
-                    animate={{ width: `${Math.max(2, Math.min(100, parseJob.progress_pct || 0))}%` }}
-                    transition={{ duration: 0.35, ease: "easeOut" }}
-                    className="h-full"
-                    style={{ background: "var(--accent)" }}
-                  />
-                </div>
-              </div>
-            </section>
+              <Progress className="mt-6" value={Math.max(0, Math.min(100, parseJob.progress_pct || 0))}>
+                <ProgressLabel>Progress</ProgressLabel>
+                <ProgressValue />
+              </Progress>
+            </CheckerSurface>
           )}
         </>
       )}
+      <Dialog open={!!deleteDocument} onOpenChange={(open) => !open && setDeleteDocument(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete document?</DialogTitle>
+            <DialogDescription>
+              This permanently removes &quot;{deleteDocument?.display_name || deleteDocument?.filename}&quot; and its stored parsed content.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteDocument(null)}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => void confirmHardDeleteDocument()}>
+              Delete Document
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -3,9 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   BriefcaseBusiness,
-  Check,
-  Database,
-  Globe2,
   LoaderCircle,
   ShieldAlert,
   ShieldCheck,
@@ -20,6 +17,12 @@ import {
   type CreateProjectResponse,
   type VendorRegion,
 } from "@/lib/uploadApi";
+import { CheckboxChip, SelectField, SwitchRow } from "@/components/checker-ui";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 type Props = {
   open: boolean;
@@ -124,13 +127,6 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
     }
   }
 
-  function toggleDataType(value: string) {
-    setDataTypes((current) => {
-      const next = current.includes(value) ? current.filter((item) => item !== value) : [...current, value];
-      return next.length ? next : current;
-    });
-  }
-
   function setPersonalData(value: boolean) {
     setSharesPersonalData(value);
     if (!value) {
@@ -158,8 +154,7 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-40 backdrop-blur-md"
-            style={{ background: "rgba(0,0,0,0.58)" }}
+            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-md"
             onClick={close}
           />
           <motion.div
@@ -175,42 +170,40 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
               role="dialog"
               aria-modal="true"
               aria-labelledby="vendor-review-create-title"
-              className="premium-panel grid max-h-[92vh] w-full max-w-5xl overflow-hidden text-left lg:grid-cols-[0.82fr_1.18fr]"
-              style={{ background: "var(--bg)", border: "1px solid var(--line)" }}
+              className="grid max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-xl border border-border bg-card text-left text-card-foreground shadow-2xl lg:grid-cols-[0.82fr_1.18fr]"
               onClick={(event) => event.stopPropagation()}
             >
+              <h2 id="vendor-review-create-title" className="sr-only">New Vendor Review</h2>
               <aside
-                className="hidden min-h-[560px] flex-col justify-between border-r px-8 py-8 lg:flex"
-                style={{ borderColor: "var(--line)", background: "var(--bg-1)" }}
+                className="hidden min-h-[560px] flex-col justify-between border-r border-border bg-muted/35 px-8 py-8 lg:flex"
               >
                 <div>
                   <div
-                    className="mb-8 inline-flex h-11 w-11 items-center justify-center rounded-2xl border"
-                    style={{ borderColor: "var(--line)", background: "var(--bg)" }}
+                    className="mb-8 inline-flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-background text-primary"
                   >
-                    <ShieldCheck className="h-5 w-5" style={{ color: "var(--accent)" }} />
+                    <ShieldCheck className="h-5 w-5" />
                   </div>
-                  <div className="text-[10px] uppercase tracking-[0.32em]" style={{ color: "var(--accent)" }}>
+                  <div className="text-[10px] uppercase tracking-[0.32em] text-primary">
                     Checker intake
                   </div>
-                  <h2 id="vendor-review-create-title" className="mt-5 max-w-xs text-4xl font-semibold leading-[1.02]" style={{ color: "var(--text)" }}>
+                  <h2 className="mt-5 max-w-xs text-4xl font-semibold leading-[1.02] text-foreground">
                     New Vendor Review
                   </h2>
                 </div>
 
                 <div className="grid gap-3">
-                  <div className="flex items-start gap-3 rounded-2xl border px-4 py-3" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
-                    <BriefcaseBusiness className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--text-3)" }} />
+                  <div className="flex items-start gap-3 rounded-lg border border-border bg-background px-4 py-3">
+                    <BriefcaseBusiness className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                     <div>
-                      <div className="text-sm font-medium" style={{ color: "var(--text)" }}>Vendor context</div>
-                      <div className="mt-1 text-xs leading-5" style={{ color: "var(--text-3)" }}>Name, use case, data profile, criticality.</div>
+                      <div className="text-sm font-medium text-foreground">Vendor context</div>
+                      <div className="mt-1 text-xs leading-5 text-muted-foreground">Name, use case, data profile, criticality.</div>
                     </div>
                   </div>
-                  <div className="flex items-start gap-3 rounded-2xl border px-4 py-3" style={{ borderColor: "var(--line)", background: "var(--bg)" }}>
-                    <Sparkles className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--text-3)" }} />
+                  <div className="flex items-start gap-3 rounded-lg border border-border bg-background px-4 py-3">
+                    <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                     <div>
-                      <div className="text-sm font-medium" style={{ color: "var(--text)" }}>Workspace ready</div>
-                      <div className="mt-1 text-xs leading-5" style={{ color: "var(--text-3)" }}>Documents, criteria, review run, Approval Pack.</div>
+                      <div className="text-sm font-medium text-foreground">Workspace ready</div>
+                      <div className="mt-1 text-xs leading-5 text-muted-foreground">Documents, criteria, review run, Approval Pack.</div>
                     </div>
                   </div>
                 </div>
@@ -219,46 +212,47 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
               <div className="overflow-y-auto px-5 py-5 sm:px-8 sm:py-7">
                 <div className="mb-7 flex items-start justify-between gap-6 lg:hidden">
                   <div>
-                    <div className="text-[10px] uppercase tracking-[0.28em]" style={{ color: "var(--accent)" }}>Checker intake</div>
-                    <h2 id="vendor-review-create-title-mobile" className="mt-3 text-3xl font-semibold" style={{ color: "var(--text)" }}>
+                    <div className="text-[10px] uppercase tracking-[0.28em] text-primary">Checker intake</div>
+                    <h2 id="vendor-review-create-title-mobile" className="mt-3 text-3xl font-semibold text-foreground">
                       New Vendor Review
                     </h2>
                   </div>
-                  <button
+                  <Button
                     type="button"
                     onClick={close}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-colors hover:bg-muted"
-                    style={{ color: "var(--text-3)" }}
+                    variant="ghost"
+                    size="icon-lg"
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
                     aria-label="Close"
                   >
                     <X className="h-5 w-5" />
-                  </button>
+                  </Button>
                 </div>
 
                 <div className="hidden items-start justify-end lg:flex">
-                  <button
+                  <Button
                     type="button"
                     onClick={close}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-colors hover:bg-muted"
-                    style={{ color: "var(--text-3)" }}
+                    variant="ghost"
+                    size="icon-lg"
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
                     aria-label="Close"
                   >
                     <X className="h-5 w-5" />
-                  </button>
+                  </Button>
                 </div>
 
                 <div className="grid gap-5">
                   <label className="block">
-                    <span className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
+                    <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-muted-foreground">
                       Vendor
                     </span>
-                    <input
+                    <Input
                       ref={vendorInputRef}
                       value={vendorName}
                       onChange={(event) => setVendorName(event.target.value)}
                       placeholder="ITG"
-                      className="premium-focus w-full rounded-2xl px-4 py-3.5 text-base outline-none transition-colors"
-                      style={{ background: "var(--bg-1)", border: "1px solid var(--line)", color: "var(--text)" }}
+                      className="h-12 rounded-lg bg-background px-4 text-base"
                       onKeyDown={(event) => {
                         if (event.key === "Enter" && canCreate) void handleCreate();
                       }}
@@ -266,216 +260,152 @@ export default function VendorReviewCreateDialog({ open, onOpenChange, onCreated
                   </label>
 
                   <label className="block">
-                    <span className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
+                    <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-muted-foreground">
                       Intended use case
                     </span>
-                    <textarea
+                    <Textarea
                       value={intendedUseCase}
                       onChange={(event) => setIntendedUseCase(event.target.value)}
                       placeholder="AI chatbot for customer support"
                       rows={4}
-                      className="premium-focus w-full resize-none rounded-2xl px-4 py-3.5 text-base leading-7 outline-none transition-colors"
-                      style={{ background: "var(--bg-1)", border: "1px solid var(--line)", color: "var(--text)" }}
+                      className="min-h-28 resize-none rounded-lg bg-background px-4 py-3 text-base leading-6"
                     />
                   </label>
 
                   <div className="grid gap-4 md:grid-cols-[0.78fr_1.22fr]">
-                    <div>
-                      <div className="mb-2 text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
-                        Personal data
-                      </div>
-                      <div className="grid grid-cols-2 overflow-hidden rounded-2xl border" style={{ borderColor: "var(--line)" }}>
-                        {[true, false].map((value) => {
-                          const selected = sharesPersonalData === value;
-                          return (
-                            <button
-                              key={String(value)}
-                              type="button"
-                              onClick={() => setPersonalData(value)}
-                              className="flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors"
-                              style={{
-                                background: selected ? "var(--invert)" : "var(--bg-1)",
-                                color: selected ? "var(--invert-fg)" : "var(--text-2)",
-                                borderRight: value ? "1px solid var(--line)" : undefined,
-                              }}
-                            >
-                              {selected ? <Check className="h-4 w-4" /> : <Database className="h-4 w-4" />}
-                              {value ? "Yes" : "No"}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    <SwitchRow
+                      id="create-shares-personal-data"
+                      label="Personal data"
+                      description={sharesPersonalData ? "Vendor receives personal data." : "No personal data in scope."}
+                      checked={sharesPersonalData}
+                      onCheckedChange={setPersonalData}
+                    />
 
                     <div>
-                      <div className="mb-2 text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
+                      <div className="mb-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
                         Business criticality
                       </div>
-                      <div className="grid gap-2 sm:grid-cols-3">
+                      <ToggleGroup
+                        value={[businessCriticality]}
+                        onValueChange={(values) => {
+                          const next = values.at(-1) as BusinessCriticality | undefined;
+                          if (next) setBusinessCriticality(next);
+                        }}
+                        className="grid w-full grid-cols-1 items-stretch gap-2 sm:grid-cols-3"
+                      >
                         {CRITICALITY_OPTIONS.map((option) => {
                           const selected = businessCriticality === option.value;
                           return (
-                            <button
+                            <ToggleGroupItem
                               key={option.value}
-                              type="button"
-                              onClick={() => setBusinessCriticality(option.value)}
-                              className="rounded-2xl border px-3 py-3 text-left transition-colors"
-                              style={{
-                                borderColor: selected ? "var(--accent)" : "var(--line)",
-                                background: selected ? "var(--bg-2)" : "var(--bg-1)",
-                                color: selected ? "var(--text)" : "var(--text-2)",
-                              }}
+                              value={option.value}
+                              variant="outline"
+                              className="h-auto min-h-[88px] w-full flex-col items-start justify-start whitespace-normal rounded-lg bg-background p-3 text-left text-muted-foreground aria-pressed:border-primary/50 aria-pressed:bg-primary/10 aria-pressed:text-foreground"
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <span className="text-sm font-medium">{option.label}</span>
-                                {selected ? <ShieldAlert className="h-4 w-4" style={{ color: "var(--accent)" }} /> : null}
+                                {selected ? <ShieldAlert className="h-4 w-4 text-primary" /> : null}
                               </div>
-                              <div className="mt-2 text-xs leading-5" style={{ color: "var(--text-3)" }}>{option.copy}</div>
-                            </button>
+                              <div className="mt-2 text-xs leading-5 text-muted-foreground">{option.copy}</div>
+                            </ToggleGroupItem>
                           );
                         })}
-                      </div>
+                      </ToggleGroup>
                     </div>
                   </div>
 
                   <div className="grid gap-4 md:grid-cols-[1fr_0.72fr]">
                     <div>
-                      <div className="mb-2 text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
+                      <div className="mb-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
                         Data profile
                       </div>
-                      <div className="grid gap-2 sm:grid-cols-3">
+                      <ToggleGroup
+                        multiple
+                        disabled={!sharesPersonalData}
+                        value={sharesPersonalData ? dataTypes.filter((item) => item !== "no_personal_data") : []}
+                        onValueChange={(values) => {
+                          if (values.length) setDataTypes(values);
+                        }}
+                        className="grid w-full grid-cols-2 items-stretch gap-2 sm:grid-cols-3"
+                      >
                         {DATA_TYPE_OPTIONS.map((option) => {
                           const selected = dataTypes.includes(option.value) && sharesPersonalData;
                           return (
-                            <button
+                            <ToggleGroupItem
                               key={option.value}
-                              type="button"
-                              disabled={!sharesPersonalData}
-                              onClick={() => toggleDataType(option.value)}
-                              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-sm transition-colors disabled:opacity-45"
-                              style={{
-                                borderColor: selected ? "var(--accent)" : "var(--line)",
-                                background: selected ? "var(--bg-2)" : "var(--bg-1)",
-                                color: selected ? "var(--text)" : "var(--text-2)",
-                              }}
+                              value={option.value}
+                              variant="outline"
+                              className="h-auto min-h-11 w-full whitespace-normal rounded-lg bg-background px-3 py-2 text-center text-sm text-muted-foreground aria-pressed:border-primary/50 aria-pressed:bg-primary/10 aria-pressed:text-foreground"
                             >
-                              {selected ? <Check className="h-4 w-4 shrink-0" /> : <Database className="h-4 w-4 shrink-0" />}
-                              <span className="text-center leading-5">{option.label}</span>
-                            </button>
+                              <span className="leading-5">{option.label}</span>
+                              {selected ? <span className="sr-only">selected</span> : null}
+                            </ToggleGroupItem>
                           );
                         })}
-                      </div>
+                      </ToggleGroup>
                     </div>
 
-                    <label className="block">
-                      <span className="mb-2 block text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
-                        Vendor region
-                      </span>
-                      <div className="relative">
-                        <Globe2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: "var(--text-3)" }} />
-                        <select
-                          value={vendorRegion}
-                          onChange={(event) => setVendorRegion(event.target.value as VendorRegion)}
-                          className="premium-focus h-11 w-full appearance-none rounded-2xl px-9 text-sm outline-none"
-                          style={{ background: "var(--bg-1)", border: "1px solid var(--line)", color: "var(--text)" }}
-                        >
-                          {REGION_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </label>
+                    <SelectField
+                      label="Vendor region"
+                      value={vendorRegion}
+                      onValueChange={setVendorRegion}
+                      options={REGION_OPTIONS}
+                      triggerClassName="h-11"
+                    />
                   </div>
 
                   <div className="grid gap-4 md:grid-cols-3">
-                    <div>
-                      <div className="mb-2 text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
-                        EU personal data
-                      </div>
-                      <div className="grid grid-cols-2 overflow-hidden rounded-2xl border" style={{ borderColor: "var(--line)" }}>
-                        {[true, false].map((value) => {
-                          const selected = processesEuPersonalData === value;
-                          return (
-                            <button
-                              key={String(value)}
-                              type="button"
-                              onClick={() => setProcessesEuPersonalData(value)}
-                              className="px-3 py-2.5 text-sm font-medium transition-colors"
-                              style={{
-                                background: selected ? "var(--invert)" : "var(--bg-1)",
-                                color: selected ? "var(--invert-fg)" : "var(--text-2)",
-                                borderRight: value ? "1px solid var(--line)" : undefined,
-                              }}
-                            >
-                              {value ? "Yes" : "No"}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    <SwitchRow
+                      id="create-processes-eu-data"
+                      label="EU personal data"
+                      description={processesEuPersonalData ? "EU/EEA data is in scope." : "No EU/EEA data expected."}
+                      checked={processesEuPersonalData}
+                      onCheckedChange={setProcessesEuPersonalData}
+                    />
 
-                    <div>
-                      <div className="mb-2 text-xs uppercase tracking-[0.18em]" style={{ color: "var(--text-3)" }}>
-                        EEA transfer
-                      </div>
-                      <div className="grid grid-cols-2 overflow-hidden rounded-2xl border" style={{ borderColor: "var(--line)" }}>
-                        {[true, false].map((value) => {
-                          const selected = transfersDataOutsideEea === value;
-                          return (
-                            <button
-                              key={String(value)}
-                              type="button"
-                              onClick={() => setTransfersDataOutsideEea(value)}
-                              className="px-3 py-2.5 text-sm font-medium transition-colors"
-                              style={{
-                                background: selected ? "var(--invert)" : "var(--bg-1)",
-                                color: selected ? "var(--invert-fg)" : "var(--text-2)",
-                                borderRight: value ? "1px solid var(--line)" : undefined,
-                              }}
-                            >
-                              {value ? "Yes" : "No"}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    <SwitchRow
+                      id="create-transfers-eea-data"
+                      label="EEA transfer"
+                      description={transfersDataOutsideEea ? "Transfer outside EEA expected." : "No EEA transfer expected."}
+                      checked={transfersDataOutsideEea}
+                      onCheckedChange={setTransfersDataOutsideEea}
+                    />
 
-                    <label className="flex min-h-[68px] items-center gap-3 rounded-2xl border px-4 py-3 text-sm" style={{ borderColor: "var(--line)", background: "var(--bg-1)", color: "var(--text-2)" }}>
-                      <input
-                        type="checkbox"
-                        checked={hasAiFeatures}
-                        onChange={(event) => setHasAiFeatures(event.target.checked)}
-                      />
-                      <span>AI features or model training</span>
-                    </label>
+                    <CheckboxChip
+                      label="AI features or model training"
+                      checked={hasAiFeatures}
+                      onCheckedChange={setHasAiFeatures}
+                      className="min-h-[68px] justify-start rounded-lg px-4 py-3"
+                    />
                   </div>
 
                   {error ? (
-                    <div className="rounded-2xl border px-4 py-3 text-sm" style={{ borderColor: "rgba(248,113,113,0.35)", color: "var(--danger)" }}>
-                      {error}
-                    </div>
+                    <Alert variant="destructive" className="border-destructive/30 bg-[var(--danger-bg)]">
+                      <AlertDescription className="text-[var(--danger)]">{error}</AlertDescription>
+                    </Alert>
                   ) : null}
 
                   <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:items-center sm:justify-end">
-                    <button
+                    <Button
                       type="button"
                       onClick={close}
                       disabled={creating}
-                      className="rounded-2xl px-5 py-3 text-sm transition-colors hover:bg-muted"
-                      style={{ color: "var(--text-2)" }}
+                      variant="ghost"
+                      size="lg"
+                      className="h-11 px-5"
                     >
                       Cancel
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
                       onClick={() => void handleCreate()}
                       disabled={creating || !canCreate}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl px-6 py-3 text-sm font-medium transition-opacity hover:opacity-85 disabled:opacity-40"
-                      style={{ background: "var(--invert)", color: "var(--invert-fg)" }}
+                      size="lg"
+                      className="h-11 px-6"
                     >
                       {creating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <BriefcaseBusiness className="h-4 w-4" />}
                       Create Review
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </div>

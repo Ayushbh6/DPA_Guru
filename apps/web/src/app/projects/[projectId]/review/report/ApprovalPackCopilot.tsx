@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { CheckerPanel, CheckerSurface } from "@/components/checker-ui";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -100,28 +101,46 @@ function ToolRows({ rows }: { rows: CopilotToolActivity[] }) {
   return (
     <div className="mb-3 grid gap-1.5">
       {rows.slice(-4).map((row, index) => (
-        <details
+        <ToolRow
           key={row.activity_id || `${row.label}-${index}`}
-          className="group rounded-2xl border bg-muted/40 px-3 py-2 text-muted-foreground"
-        >
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs">
-            <span className="flex min-w-0 items-center gap-2">
-              {row.status === "running" || row.status === "queued" ? (
-                <CircleDashed className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              ) : (
-                <Check className="h-3.5 w-3.5 shrink-0" />
-              )}
-              <span className="truncate">{row.label}</span>
-            </span>
-            {row.detail ? <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" /> : null}
-          </summary>
-          {row.detail ? (
-            <p className="mt-2 border-t pt-2 text-xs leading-5 text-muted-foreground">
-              {row.detail}
-            </p>
-          ) : null}
-        </details>
+          row={row}
+        />
       ))}
+    </div>
+  );
+}
+
+function ToolRow({ row }: { row: CopilotToolActivity }) {
+  const [open, setOpen] = useState(false);
+  const hasDetail = !!row.detail;
+  const pending = row.status === "running" || row.status === "queued";
+
+  return (
+    <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-muted-foreground">
+      <button
+        type="button"
+        onClick={() => hasDetail && setOpen((value) => !value)}
+        aria-expanded={hasDetail ? open : undefined}
+        aria-disabled={!hasDetail}
+        className={`flex w-full items-center justify-between gap-3 text-left text-xs ${hasDetail ? "cursor-pointer" : "cursor-default"}`}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          {pending ? (
+            <CircleDashed className="h-3.5 w-3.5 shrink-0 animate-spin" />
+          ) : (
+            <Check className="h-3.5 w-3.5 shrink-0" />
+          )}
+          <span className="truncate">{row.label}</span>
+        </span>
+        {hasDetail ? (
+          <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+        ) : null}
+      </button>
+      {hasDetail && open ? (
+        <p className="mt-2 border-t border-border pt-2 text-xs leading-5 text-muted-foreground">
+          {row.detail}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -159,8 +178,7 @@ function RevisionCard({
             onClick={() => onApply(revision.revision_id)}
             disabled={busy}
             size="sm"
-            className="rounded-2xl"
-            style={{ background: "var(--success)", color: "white" }}
+            className="bg-[var(--success)] text-background hover:opacity-90"
           >
             {busy ? <LoaderCircle data-icon="inline-start" className="h-3.5 w-3.5 animate-spin" /> : <Check data-icon="inline-start" className="h-3.5 w-3.5" />}
             Approve
@@ -171,7 +189,7 @@ function RevisionCard({
             disabled={busy}
             variant="outline"
             size="sm"
-            className="rounded-2xl"
+            className="rounded-lg"
           >
             <X data-icon="inline-start" className="h-3.5 w-3.5" />
             Reject
@@ -200,7 +218,7 @@ function MessageBubble({
   return (
     <article className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[92%] rounded-3xl border px-4 py-3 shadow-sm ${isUser ? "rounded-br-md" : "rounded-bl-md"}`}
+        className={`max-w-[92%] rounded-lg border px-4 py-3 shadow-sm ${isUser ? "rounded-br-sm" : "rounded-bl-sm"}`}
         style={{
           borderColor: isUser ? "var(--invert)" : "var(--line)",
           background: isUser ? "var(--invert)" : "var(--bg-1)",
@@ -477,7 +495,7 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
   }
 
   return (
-    <aside className="premium-panel overflow-hidden">
+    <CheckerSurface className="overflow-hidden">
       <div className="border-b p-4" style={{ borderColor: "var(--line)" }}>
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -495,7 +513,7 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
             disabled={threadState !== "ready" || creatingThread}
             variant="outline"
             size="sm"
-            className="shrink-0 rounded-2xl"
+            className="shrink-0"
           >
             {creatingThread ? <LoaderCircle data-icon="inline-start" className="h-3.5 w-3.5 animate-spin" /> : <MessageSquarePlus data-icon="inline-start" className="h-3.5 w-3.5" />}
             New Chat
@@ -510,7 +528,7 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
               key={`${thread.thread_id}-${index}`}
               type="button"
               onClick={() => setActiveThreadId(thread.thread_id)}
-              className="max-w-[180px] shrink-0 rounded-2xl border px-3 py-2 text-left text-xs transition-colors"
+              className="max-w-[180px] shrink-0 rounded-lg border px-3 py-2 text-left text-xs transition-colors"
               style={{
                 borderColor: activeThreadId === thread.thread_id ? "var(--invert)" : "var(--line)",
                 background: activeThreadId === thread.thread_id ? "var(--invert)" : "var(--bg)",
@@ -534,20 +552,20 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
           ) : null}
 
           {threadState === "unavailable" ? (
-            <div className="rounded-2xl border bg-background p-4 text-sm leading-6 text-muted-foreground">
+            <CheckerPanel className="p-4 text-sm leading-6 text-muted-foreground">
               Copilot is ready on the frontend, but the backend endpoints are not available in this checkout yet.
-            </div>
+            </CheckerPanel>
           ) : null}
 
           {threadState === "error" ? (
-            <div className="rounded-2xl border p-4 text-sm leading-6" style={{ borderColor: "var(--danger)", background: "var(--danger-bg)", color: "var(--danger)" }}>
+            <CheckerPanel className="border-[var(--danger)] bg-[var(--danger-bg)] p-4 text-sm leading-6 text-[var(--danger)]">
               {error || "Failed to load copilot."}
-            </div>
+            </CheckerPanel>
           ) : null}
 
           {threadState === "ready" && !messages.length ? (
             <div className="grid gap-3">
-              <div className="rounded-3xl border bg-background p-4">
+              <CheckerPanel className="bg-background p-4">
                 <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--text)" }}>
                   <Sparkles className="h-4 w-4" />
                   Start with a project question
@@ -555,7 +573,7 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
                 <p className="mt-2 text-sm leading-6" style={{ color: "var(--text-2)" }}>
                   Try asking why a risk was rated high, where a clause was found, or how to revise the internal memo.
                 </p>
-              </div>
+              </CheckerPanel>
             </div>
           ) : null}
 
@@ -593,13 +611,13 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
               disabled={threadState !== "ready" || sending}
               rows={3}
               placeholder={threadState === "ready" ? "Ask about the Approval Pack..." : "Copilot unavailable"}
-              className="min-h-20 flex-1 resize-none rounded-2xl bg-muted/40 px-3 py-2 text-sm disabled:opacity-60"
+              className="min-h-20 flex-1 resize-none rounded-lg bg-muted/40 px-3 py-2 text-sm disabled:opacity-60"
             />
             <Button
               type="submit"
               disabled={!draft.trim() || threadState !== "ready" || sending}
               size="icon"
-              className="h-10 w-10 rounded-2xl"
+              className="h-10 w-10 rounded-lg"
               aria-label="Send copilot message"
             >
               {sending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -607,6 +625,6 @@ export function ApprovalPackCopilot({ projectId }: { projectId: string }) {
           </div>
         </form>
       </div>
-    </aside>
+    </CheckerSurface>
   );
 }

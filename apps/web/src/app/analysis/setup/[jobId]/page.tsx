@@ -298,7 +298,7 @@ export default function AnalysisSetupPage() {
           )}
 
           {error && (
-            <div className="border border-red-300/20 bg-red-400/5 p-4 text-sm text-red-100/85">{error}</div>
+            <div className="border border-[var(--danger)] bg-[var(--danger-bg)] p-4 text-sm text-[var(--danger)]">{error}</div>
           )}
 
           {!loading && job?.result && (
